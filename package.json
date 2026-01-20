@@ -1,0 +1,47 @@
+{
+  "name": "@testcollab/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for TestCollab - Exposes test management functionality to AI assistants",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "tc-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@testcollab/sdk": "^3.10.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "tsx": "^4.7.0",
+    "vitest": "^2.0.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "testcollab",
+    "test-management",
+    "ai",
+    "claude"
+  ],
+  "author": "TestCollab",
+  "license": "UNLICENSED",
+  "private": true
+}
