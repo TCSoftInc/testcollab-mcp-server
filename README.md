@@ -8,9 +8,10 @@ MCP (Model Context Protocol) server that exposes TestCollab test management func
 - **Test Case Management**
   - `list_test_cases` - List test cases with filtering, sorting, and pagination
   - `create_test_case` - Create test cases with steps and custom fields
+  - `update_test_case` - Update existing test cases
 
 ### Planned
-- Update and delete test cases
+- Delete test cases
 - Suite management
 - Test plan management
 - Test execution recording
@@ -198,6 +199,55 @@ Create a new test case with optional custom fields.
   "testCase": {
     "id": 1234,
     "title": "Verify login with valid credentials",
+    "project": { "id": 16, "name": "My Project" },
+    "suite": { "id": 123, "title": "Login Suite" },
+    "priority": "2"
+  }
+}
+```
+
+### update_test_case
+
+Update an existing test case.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | number | Yes | Test case ID to update |
+| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
+| `title` | string | No | New title |
+| `suite_id` | number | No | Move to different suite |
+| `description` | string | No | HTML-formatted description |
+| `priority` | number | No | 0=Low, 1=Normal, 2=High |
+| `steps` | array | No | Replace all steps |
+| `tags` | array | No | Replace all tags (array of tag IDs) |
+| `requirements` | array | No | Replace all requirements (array of requirement IDs) |
+| `custom_fields` | array | No | Update custom field values |
+| `attachments` | array | No | Replace attachments (array of file IDs) |
+
+**Example:**
+```json
+{
+  "id": 1234,
+  "title": "Updated: Verify login with valid credentials",
+  "priority": 2,
+  "steps": [
+    { "step": "Navigate to login page", "expected_result": "Page loads" },
+    { "step": "Enter valid credentials", "expected_result": "Fields accept input" },
+    { "step": "Click Login", "expected_result": "User logged in" },
+    { "step": "Verify dashboard", "expected_result": "Dashboard displayed" }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Test case updated successfully",
+  "testCase": {
+    "id": 1234,
+    "title": "Updated: Verify login with valid credentials",
     "project": { "id": 16, "name": "My Project" },
     "suite": { "id": 123, "title": "Login Suite" },
     "priority": "2"
