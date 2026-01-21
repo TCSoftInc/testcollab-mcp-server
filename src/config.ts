@@ -11,6 +11,8 @@ export interface Config {
   serverName: string;
   /** Server version */
   serverVersion: string;
+  /** Default project ID (optional - if set, project_id becomes optional in tools) */
+  defaultProjectId?: number;
 }
 
 function getEnvOrThrow(key: string): string {
@@ -26,11 +28,15 @@ function getEnvOrDefault(key: string, defaultValue: string): string {
 }
 
 export function loadConfig(): Config {
+  const defaultProjectStr = process.env["TC_DEFAULT_PROJECT"];
+  const defaultProjectId = defaultProjectStr ? parseInt(defaultProjectStr, 10) : undefined;
+
   return {
     apiBaseUrl: getEnvOrDefault("TC_API_URL", "http://localhost:1337"),
     apiToken: getEnvOrThrow("TC_API_TOKEN"),
     serverName: "testcollab",
     serverVersion: "1.0.0",
+    defaultProjectId: defaultProjectId && !isNaN(defaultProjectId) ? defaultProjectId : undefined,
   };
 }
 

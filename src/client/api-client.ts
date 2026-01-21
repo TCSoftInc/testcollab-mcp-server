@@ -8,12 +8,11 @@ import {
   createConfiguration,
   TestCasesApi,
   SuitesApi,
-  TestCasePayloadPriorityEnum,
   type Configuration,
   type TestCase as SDKTestCase,
-  type TestCaseStepsPayload,
 } from "@testcollab/sdk";
 import { getConfig } from "../config.js";
+import { getRequestContext } from "../context.js";
 import type {
   TestCase,
   TestCaseCollection,
@@ -22,56 +21,27 @@ import type {
 } from "../types/index.js";
 
 // ============================================================================
-// Helper Functions for SDK Type Conversion
-// ============================================================================
-
-/**
- * Convert a numeric priority to SDK enum
- */
-function toPriorityEnum(
-  priority?: number
-): typeof TestCasePayloadPriorityEnum[keyof typeof TestCasePayloadPriorityEnum] | undefined {
-  if (priority === undefined) return undefined;
-  switch (priority) {
-    case 0:
-      return TestCasePayloadPriorityEnum.NUMBER_0;
-    case 1:
-      return TestCasePayloadPriorityEnum.NUMBER_1;
-    case 2:
-      return TestCasePayloadPriorityEnum.NUMBER_2;
-    default:
-      return TestCasePayloadPriorityEnum.NUMBER_1; // Default to Normal
-  }
-}
-
-/**
- * Convert step data to SDK payload format
- */
-function toStepsPayload(
-  steps?: Array<{
-    step_no: number;
-    action: string;
-    expected_result?: string;
-  }>
-): TestCaseStepsPayload[] | undefined {
-  if (!steps) return undefined;
-  return steps.map((s) => ({
-    step: s.action,
-    expectedResult: s.expected_result,
-  }));
-}
-
-// ============================================================================
 // Aggrid Types (not in SDK - custom endpoint)
 // ============================================================================
 
 export interface AggridRequest {
-  project: number;
-  startRow?: number;
-  endRow?: number;
-  sortModel?: SortModel[];
-  filterModel?: Record<string, unknown>;
-  includeAllFelds?: boolean;
+  project: string; // Must be string, not number
+  startRow: number;
+  endRow: number;
+  rowGroupCols: unknown[];
+  valueCols: Array<{
+    id: string;
+    aggFunc: string;
+    displayName: string;
+    field: string;
+  }>;
+  pivotCols: unknown[];
+  pivotMode: boolean;
+  groupKeys: unknown[];
+  filterModel: Record<string, unknown>;
+  sortModel: SortModel[];
+  showImmediateChildren?: boolean;
+  suite?: number | false;
 }
 
 export interface AggridResponse {
@@ -85,6 +55,11 @@ export interface AggridResponse {
 // API Client Class
 // ============================================================================
 
+export interface ApiClientCredentials {
+  apiToken: string;
+  apiUrl: string;
+}
+
 export class TestCollabApiClient {
   private config: Configuration;
   private baseUrl: string;
@@ -92,10 +67,16 @@ export class TestCollabApiClient {
   private testCasesApi: TestCasesApi;
   private suitesApi: SuitesApi;
 
-  constructor() {
-    const appConfig = getConfig();
-    this.baseUrl = appConfig.apiBaseUrl;
-    this.token = appConfig.apiToken;
+  constructor(credentials?: ApiClientCredentials) {
+    // Use provided credentials or fall back to env config
+    if (credentials) {
+      this.baseUrl = credentials.apiUrl;
+      this.token = credentials.apiToken;
+    } else {
+      const appConfig = getConfig();
+      this.baseUrl = appConfig.apiBaseUrl;
+      this.token = appConfig.apiToken;
+    }
 
     // Create SDK configuration
     this.config = createConfiguration(this.token, {
@@ -109,17 +90,18 @@ export class TestCollabApiClient {
 
   /**
    * Make a raw HTTP request (for endpoints not in SDK like aggrid)
+   * Uses token as query parameter (same as SDK)
    */
   private async rawRequest<T>(
     method: string,
     path: string,
     body?: unknown
   ): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const separator = path.includes("?") ? "&" : "?";
+    const url = `${this.baseUrl}${path}${separator}token=${encodeURIComponent(this.token)}`;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${this.token}`,
     };
 
     const response = await fetch(url, {
@@ -152,18 +134,26 @@ export class TestCollabApiClient {
   }): Promise<TestCaseCollection> {
     const { projectId, suiteId, filter, sort, limit = 50, offset = 0 } = params;
 
-    // Build the aggrid request payload
+    // Build the aggrid request payload with exact format the backend expects
     const aggridRequest: AggridRequest = {
-      project: projectId,
+      project: String(projectId), // Must be string
       startRow: offset,
       endRow: offset + limit,
-      sortModel: sort || [{ colId: "updated_at", sort: "desc" }],
+      rowGroupCols: [],
+      valueCols: [
+        { id: "id", aggFunc: "count", displayName: "ID", field: "id" },
+      ],
+      pivotCols: [],
+      pivotMode: false,
+      groupKeys: [],
       filterModel: {},
-      includeAllFelds: true,
+      sortModel: sort || [],
+      showImmediateChildren: false,
     };
 
     // Add suite filter if provided
     if (suiteId) {
+      aggridRequest.suite = suiteId;
       aggridRequest.filterModel = {
         ...aggridRequest.filterModel,
         suite: {
@@ -207,69 +197,124 @@ export class TestCollabApiClient {
   }
 
   /**
-   * Create a new test case using SDK
+   * Create a new test case using raw API (supports custom fields)
    */
   async createTestCase(data: {
-    project: number;
-    suite: number;
+    projectId: number;
     title: string;
+    suiteId?: number;
     description?: string;
-    precondition?: string;
-    expected_result?: string;
     priority?: number;
     steps?: Array<{
-      step_no: number;
-      action: string;
-      expected_result?: string;
+      step: string;
+      expectedResult?: string;
     }>;
     tags?: number[];
-  }): Promise<SDKTestCase> {
-    return this.testCasesApi.createTestCase({
-      testCasePayload: {
-        project: data.project,
-        suite: data.suite,
-        title: data.title,
-        description: data.description,
-        priority: toPriorityEnum(data.priority),
-        steps: toStepsPayload(data.steps),
-        tags: data.tags,
-      },
-    });
+    requirements?: number[];
+    customFields?: Array<{
+      id: number;
+      name: string;
+      label?: string;
+      value: string | number | null;
+      valueLabel?: string;
+      color?: string;
+    }>;
+    attachments?: string[];
+  }): Promise<TestCase> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+    };
+
+    if (data.suiteId !== undefined) {
+      payload.suite = data.suiteId;
+    }
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.priority !== undefined) {
+      payload.priority = data.priority;
+    }
+    if (data.steps && data.steps.length > 0) {
+      payload.steps = data.steps;
+    }
+    if (data.tags && data.tags.length > 0) {
+      payload.tags = data.tags;
+    }
+    if (data.requirements && data.requirements.length > 0) {
+      payload.requirements = data.requirements;
+    }
+    if (data.customFields && data.customFields.length > 0) {
+      payload.custom_fields = data.customFields;
+    }
+    if (data.attachments && data.attachments.length > 0) {
+      payload.attachments = data.attachments;
+    }
+
+    return this.rawRequest<TestCase>("POST", "/testcases", payload);
   }
 
   /**
-   * Update an existing test case using SDK
+   * Update an existing test case using raw API (supports partial updates and custom fields)
    */
   async updateTestCase(
     id: number,
     projectId: number,
     data: {
-      title: string; // Required by SDK
+      title?: string;
       description?: string;
-      precondition?: string;
-      expected_result?: string;
       priority?: number;
-      suite?: number;
+      suiteId?: number;
       steps?: Array<{
-        step_no: number;
-        action: string;
-        expected_result?: string;
+        step: string;
+        expectedResult?: string;
       }>;
       tags?: number[];
+      requirements?: number[];
+      customFields?: Array<{
+        id: number;
+        name: string;
+        label?: string;
+        value: string | number | null;
+        valueLabel?: string;
+        color?: string;
+      }>;
+      attachments?: string[];
     }
-  ): Promise<SDKTestCase> {
-    return this.testCasesApi.updateTestCase({
-      id,
-      testCasePayload: {
-        project: projectId,
-        title: data.title,
-        description: data.description,
-        priority: toPriorityEnum(data.priority),
-        suite: data.suite,
-        steps: toStepsPayload(data.steps),
-        tags: data.tags,
-      },
-    });
+  ): Promise<TestCase> {
+    const payload: Record<string, unknown> = {
+      project: projectId,
+    };
+
+    if (data.title !== undefined) {
+      payload.title = data.title;
+    }
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.priority !== undefined) {
+      payload.priority = data.priority;
+    }
+    if (data.suiteId !== undefined) {
+      payload.suite = data.suiteId;
+    }
+    if (data.steps !== undefined) {
+      payload.steps = data.steps;
+    }
+    if (data.tags !== undefined) {
+      payload.tags = data.tags;
+    }
+    if (data.requirements !== undefined) {
+      payload.requirements = data.requirements;
+    }
+    if (data.customFields !== undefined) {
+      payload.custom_fields = data.customFields;
+    }
+    if (data.attachments !== undefined) {
+      payload.attachments = data.attachments;
+    }
+
+    return this.rawRequest<TestCase>("PUT", `/testcases/${id}`, payload);
   }
 
   /**
@@ -297,21 +342,42 @@ export class TestCollabApiClient {
 }
 
 // ============================================================================
-// Singleton Instance
+// Client Factory
 // ============================================================================
 
-let client: TestCollabApiClient | null = null;
+// Singleton for stdio transport (uses env vars)
+let stdioClient: TestCollabApiClient | null = null;
 
+/**
+ * Get an API client instance.
+ *
+ * For HTTP transport: Creates a new client using request context credentials.
+ * For stdio transport: Returns singleton client using env var credentials.
+ */
 export function getApiClient(): TestCollabApiClient {
-  if (!client) {
-    client = new TestCollabApiClient();
+  // Check for request context (HTTP transport)
+  const requestContext = getRequestContext();
+
+  if (requestContext) {
+    // HTTP transport: create client with request credentials
+    // Note: We create a new client per-request for simplicity
+    // Could optimize with a cache keyed by token if needed
+    return new TestCollabApiClient({
+      apiToken: requestContext.apiToken,
+      apiUrl: requestContext.apiUrl,
+    });
   }
-  return client;
+
+  // Stdio transport: use singleton with env vars
+  if (!stdioClient) {
+    stdioClient = new TestCollabApiClient();
+  }
+  return stdioClient;
 }
 
 /**
- * Reset the client (useful for testing)
+ * Reset the stdio client (useful for testing)
  */
 export function resetApiClient(): void {
-  client = null;
+  stdioClient = null;
 }

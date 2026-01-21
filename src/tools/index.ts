@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { handleListTestCases } from "./test-cases/index.js";
+import { handleListTestCases, handleCreateTestCase, handleUpdateTestCase } from "./test-cases/index.js";
 
 // ============================================================================
 // Zod Schemas for Tool Inputs
@@ -112,7 +112,7 @@ Example filter:
   "title": { "filterType": "text", "type": "contains", "filter": "login" }
 }`,
     {
-      project_id: z.number().describe("Project ID (required)"),
+      project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT env var is set)"),
       suite_id: z.number().optional().describe("Filter by suite ID"),
       filter: testCaseFilterSchema
         .optional()
@@ -138,10 +138,111 @@ Example filter:
     }
   );
 
+  // -------------------------------------------------------------------------
+  // create_test_case
+  // -------------------------------------------------------------------------
+  server.tool(
+    "create_test_case",
+    `Create a new test case in TestCollab.
+
+Required: title
+Optional: project_id, suite_id, description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
+
+Steps format: [{ "step": "action", "expected_result": "result" }]
+
+Custom fields format: [{ "id": 5, "name": "field_name", "value": "value", "valueLabel": "display" }]
+
+Example:
+{
+  "title": "Verify login",
+  "priority": 2,
+  "steps": [
+    { "step": "Navigate to login", "expected_result": "Page loads" },
+    { "step": "Enter credentials", "expected_result": "Login succeeds" }
+  ]
+}`,
+    {
+      project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT is set)"),
+      title: z.string().min(1).describe("Test case title (required)"),
+      suite_id: z.number().optional().describe("Suite ID to place the test case in"),
+      description: z.string().optional().describe("Test case description (HTML supported)"),
+      priority: z.number().min(0).max(2).optional().describe("Priority: 0=Low, 1=Normal, 2=High"),
+      steps: z.array(z.object({
+        step: z.string().describe("Step action"),
+        expected_result: z.string().optional().describe("Expected result"),
+      })).optional().describe("Array of test steps"),
+      tags: z.array(z.number()).optional().describe("Array of tag IDs"),
+      requirements: z.array(z.number()).optional().describe("Array of requirement IDs"),
+      custom_fields: z.array(z.object({
+        id: z.number().describe("Custom field ID"),
+        name: z.string().describe("Custom field system name"),
+        label: z.string().optional().describe("Custom field display label"),
+        value: z.union([z.string(), z.number(), z.null()]).describe("Custom field value"),
+        valueLabel: z.string().optional().describe("Display label for value"),
+        color: z.string().optional().describe("Color for value label"),
+      })).optional().describe("Array of custom field values"),
+      attachments: z.array(z.string()).optional().describe("Array of attachment file IDs"),
+    },
+    async (args) => {
+      return handleCreateTestCase(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // update_test_case
+  // -------------------------------------------------------------------------
+  server.tool(
+    "update_test_case",
+    `Update an existing test case in TestCollab. Only provided fields will be updated.
+
+Required: id (test case ID)
+
+Optional fields:
+- title: New title
+- suite_id: Move to different suite
+- description: New description (HTML)
+- priority: 0 (Low), 1 (Normal), 2 (High)
+- steps: Replaces all existing steps
+- tags: Replaces all existing tags
+- requirements: Replaces all existing requirements
+- custom_fields: Update specific custom fields
+
+Example:
+{
+  "id": 1712,
+  "title": "Updated login test",
+  "priority": 2
+}`,
+    {
+      id: z.number().describe("Test case ID to update (required)"),
+      project_id: z.number().optional().describe("Project ID (optional if default is set)"),
+      title: z.string().min(1).optional().describe("New test case title"),
+      suite_id: z.number().optional().describe("Move to a different suite"),
+      description: z.string().optional().describe("New description (HTML supported)"),
+      priority: z.number().min(0).max(2).optional().describe("New priority: 0=Low, 1=Normal, 2=High"),
+      steps: z.array(z.object({
+        step: z.string().describe("Step action"),
+        expected_result: z.string().optional().describe("Expected result"),
+      })).optional().describe("Replace all steps"),
+      tags: z.array(z.number()).optional().describe("Replace tags with these IDs"),
+      requirements: z.array(z.number()).optional().describe("Replace requirements with these IDs"),
+      custom_fields: z.array(z.object({
+        id: z.number().describe("Custom field ID"),
+        name: z.string().describe("Custom field system name"),
+        label: z.string().optional().describe("Custom field display label"),
+        value: z.union([z.string(), z.number(), z.null()]).describe("Custom field value"),
+        valueLabel: z.string().optional().describe("Display label for value"),
+        color: z.string().optional().describe("Color for value label"),
+      })).optional().describe("Update custom field values"),
+      attachments: z.array(z.string()).optional().describe("Replace attachments with these file IDs"),
+    },
+    async (args) => {
+      return handleUpdateTestCase(args);
+    }
+  );
+
   // Future tools will be registered here:
   // server.tool("get_test_case", ...);
-  // server.tool("create_test_case", ...);
-  // server.tool("update_test_case", ...);
   // server.tool("delete_test_case", ...);
   // server.tool("list_suites", ...);
 }

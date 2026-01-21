@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 import { getApiClient } from "../../client/api-client.js";
+import { getConfig } from "../../config.js";
+import { getRequestContext } from "../../context.js";
 
 // ============================================================================
 // Schema Definitions
@@ -87,7 +89,7 @@ const testCaseFilterSchema = z
 
 // Main input schema for the tool
 export const listTestCasesSchema = z.object({
-  project_id: z.number().describe("Project ID (required)"),
+  project_id: z.number().optional().describe("Project ID (uses TC_DEFAULT_PROJECT env var if not specified)"),
   suite_id: z.number().optional().describe("Filter by suite ID"),
   filter: testCaseFilterSchema.optional().describe("Filter conditions object"),
   sort: z
@@ -135,7 +137,7 @@ Filter types:
     properties: {
       project_id: {
         type: "number",
-        description: "Project ID (required)",
+        description: "Project ID (optional if TC_DEFAULT_PROJECT env var is set)",
       },
       suite_id: {
         type: "number",
@@ -173,7 +175,7 @@ Filter types:
         minimum: 0,
       },
     },
-    required: ["project_id"],
+    required: [],
   },
 };
 
@@ -205,11 +207,33 @@ export async function handleListTestCases(
 
   const { project_id, suite_id, filter, sort, limit, offset } = parsed.data;
 
+  // Resolve project ID: use provided value or fall back to default
+  // Check request context first (HTTP transport), then env config (stdio transport)
+  const requestContext = getRequestContext();
+  const envConfig = requestContext ? null : getConfig();
+  const resolvedProjectId = project_id ?? requestContext?.defaultProjectId ?? envConfig?.defaultProjectId;
+
+  if (!resolvedProjectId) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: {
+              code: "MISSING_PROJECT_ID",
+              message: "project_id is required. Either provide it in the request or set TC_DEFAULT_PROJECT environment variable.",
+            },
+          }),
+        },
+      ],
+    };
+  }
+
   try {
     const client = getApiClient();
 
     const result = await client.listTestCases({
-      projectId: project_id,
+      projectId: resolvedProjectId,
       suiteId: suite_id,
       filter: filter,
       sort: sort,
@@ -217,11 +241,45 @@ export async function handleListTestCases(
       offset: offset,
     });
 
+    // Priority labels
+    const priorityLabels: Record<number, string> = {
+      0: "Low",
+      1: "Normal",
+      2: "High",
+    };
+
+    // Transform rows to include human-readable labels
+    const humanizedRows = result.rows.map((tc) => ({
+      id: tc.id,
+      title: tc.title,
+      description: tc.description,
+      priority: tc.priority,
+      priorityLabel: priorityLabels[tc.priority] ?? "Unknown",
+      suite: typeof tc.suite === "object" ? tc.suite?.id : tc.suite,
+      suiteTitle: typeof tc.suite === "object" ? tc.suite?.title : tc.suite_title,
+      project: typeof tc.project === "object" ? tc.project?.id : tc.project,
+      projectTitle: typeof tc.project === "object" ? tc.project?.title : undefined,
+      tags: tc.tags?.map((t) => ({ id: t.id, name: t.name })),
+      createdBy: tc.created_by?.name,
+      createdAt: tc.created_at,
+      updatedAt: tc.updated_at,
+      isAutomated: tc.is_automated === 1 || tc.is_automated === true,
+      automationStatus: tc.automation_status,
+      runCount: tc.run_count,
+      lastRunOn: tc.last_run_on,
+      steps: tc.steps ?? tc.stepsParsed,
+    }));
+
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(result, null, 2),
+          text: JSON.stringify({
+            testCases: humanizedRows,
+            totalCount: result.totalCount,
+            filteredCount: result.filteredCount,
+            returned: humanizedRows.length,
+          }, null, 2),
         },
       ],
     };

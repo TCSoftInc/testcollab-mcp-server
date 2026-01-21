@@ -7,9 +7,10 @@ MCP (Model Context Protocol) server that exposes TestCollab test management func
 ### V1.0 (Current)
 - **Test Case Management**
   - `list_test_cases` - List test cases with filtering, sorting, and pagination
+  - `create_test_case` - Create test cases with steps and custom fields
 
 ### Planned
-- Complete test case CRUD operations
+- Update and delete test cases
 - Suite management
 - Test plan management
 - Test execution recording
@@ -32,7 +33,16 @@ TC_API_TOKEN=your-api-token-here
 
 # Optional: API base URL (default: http://localhost:1337)
 TC_API_URL=http://localhost:1337
+
+# Optional: Default project ID (eliminates need to specify project_id in every request)
+TC_DEFAULT_PROJECT=16
 ```
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TC_API_TOKEN` | Yes | API token from TestCollab user profile |
+| `TC_API_URL` | No | API base URL (default: `http://localhost:1337`) |
+| `TC_DEFAULT_PROJECT` | No | Default project ID - if set, `project_id` becomes optional in tool calls |
 
 ## Usage
 
@@ -48,7 +58,8 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
       "args": ["/path/to/tc-mcp-server/dist/index.js"],
       "env": {
         "TC_API_URL": "http://localhost:1337",
-        "TC_API_TOKEN": "your-api-token"
+        "TC_API_TOKEN": "your-api-token",
+        "TC_DEFAULT_PROJECT": "16"
       }
     }
   }
@@ -67,7 +78,8 @@ Add to your Claude Code settings (`.claude/settings.json`):
       "args": ["./tc-mcp-server/dist/index.js"],
       "env": {
         "TC_API_URL": "http://localhost:1337",
-        "TC_API_TOKEN": "your-api-token"
+        "TC_API_TOKEN": "your-api-token",
+        "TC_DEFAULT_PROJECT": "16"
       }
     }
   }
@@ -93,12 +105,12 @@ List test cases from a project with optional filtering.
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `project_id` | number | Yes | Project ID |
+| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
 | `suite_id` | number | No | Filter by suite |
 | `filter` | object | No | Filter conditions |
 | `sort` | array | No | Sort specification |
-| `limit` | number | No | Max results (default: 50) |
-| `offset` | number | No | Skip N results |
+| `limit` | number | No | Max results (1-100, default: 50) |
+| `offset` | number | No | Skip N results (default: 0) |
 
 **Filter Example:**
 ```json
@@ -127,6 +139,57 @@ List test cases from a project with optional filtering.
   "rows": [...],
   "totalCount": 150,
   "filteredCount": 25
+}
+```
+
+### create_test_case
+
+Create a new test case with optional custom fields.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
+| `title` | string | Yes | Test case title |
+| `suite_id` | number | No | Suite to place test case in |
+| `description` | string | No | HTML-formatted description |
+| `priority` | number | No | 0=Low, 1=Normal, 2=High (default: 1) |
+| `steps` | array | No | Test steps array |
+| `tags` | array | No | Array of tag IDs |
+| `requirements` | array | No | Array of requirement IDs |
+| `custom_fields` | array | No | Array of custom field values |
+| `attachments` | array | No | Array of attachment file IDs |
+
+**Example:**
+```json
+{
+  "title": "Verify login with valid credentials",
+  "suite_id": 123,
+  "priority": 2,
+  "description": "<p>Test user login</p>",
+  "steps": [
+    { "step": "Navigate to login page", "expected_result": "Page loads" },
+    { "step": "Enter valid credentials", "expected_result": "Fields accept input" },
+    { "step": "Click Login", "expected_result": "User logged in" }
+  ],
+  "custom_fields": [
+    { "id": 5, "name": "env_dropdown", "value": 1, "valueLabel": "staging" }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Test case created successfully",
+  "testCase": {
+    "id": 1234,
+    "title": "Verify login with valid credentials",
+    "project": { "id": 16, "name": "My Project" },
+    "suite": { "id": 123, "title": "Login Suite" },
+    "priority": "2"
+  }
 }
 ```
 
@@ -178,6 +241,11 @@ tc-mcp-server/
 ├── tsconfig.json
 └── README.md
 ```
+
+## Documentation
+
+- [Installation Guide](docs/install.md) - Step-by-step setup for Claude Code and Claude Desktop
+- [Use Cases](docs/use_cases.md) - Common scenarios and example prompts for chatbot integration
 
 ## License
 

@@ -10,7 +10,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:http": "node dist/http-server.js",
     "dev": "tsx watch src/index.ts",
+    "dev:http": "nodemon --watch src --ext ts --exec 'npm run build && node dist/http-server.js'",
     "test": "vitest",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
@@ -26,6 +28,7 @@
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "tsx": "^4.7.0",
+    "nodemon": "^3.1.0",
     "vitest": "^2.0.0",
     "eslint": "^8.57.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
