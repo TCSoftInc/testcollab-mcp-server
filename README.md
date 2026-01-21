@@ -86,6 +86,18 @@ Add to your Claude Code settings (`.claude/settings.json`):
 }
 ```
 
+### With Codex
+
+```toml
+[mcp_servers.testcollab]
+url = "http://localhost:3100/mcp"
+http_headers = { "X-TC-Default-Project" = "17", X-TC-API-Token = "", X-TC-API-URL = "http://localhost:1337" }
+
+# (optional) for high security - use env var
+#env_http_headers = { "X-TC-Token" = "TESTCOLLAB_MCP_TOKEN" }
+```
+
+
 ### Manual Testing
 
 ```bash
