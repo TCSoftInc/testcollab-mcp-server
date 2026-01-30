@@ -207,7 +207,7 @@ export class TestCollabApiClient {
     priority?: number;
     steps?: Array<{
       step: string;
-      expectedResult?: string;
+      expected_result?: string;
     }>;
     tags?: number[];
     requirements?: number[];
@@ -262,15 +262,16 @@ export class TestCollabApiClient {
     projectId: number,
     data: {
       title?: string;
-      description?: string;
+      description?: string | null;
       priority?: number;
-      suiteId?: number;
+      suiteId?: number | null;
       steps?: Array<{
         step: string;
         expectedResult?: string;
-      }>;
-      tags?: number[];
-      requirements?: number[];
+        reusableStepId?: number | null;
+      }> | null;
+      tags?: number[] | null;
+      requirements?: number[] | null;
       customFields?: Array<{
         id: number;
         name: string;
@@ -278,8 +279,8 @@ export class TestCollabApiClient {
         value: string | number | null;
         valueLabel?: string;
         color?: string;
-      }>;
-      attachments?: string[];
+      }> | null;
+      attachments?: string[] | null;
     }
   ): Promise<TestCase> {
     const payload: Record<string, unknown> = {
@@ -338,6 +339,31 @@ export class TestCollabApiClient {
     return this.suitesApi.getAllSuites({
       project: projectId,
     });
+  }
+
+  async listTags(projectId: number) {
+    const encodedProjectId = encodeURIComponent(String(projectId));
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/tags?project=${encodedProjectId}&_limit=-1`
+    );
+  }
+
+  async listRequirements(projectId: number) {
+    const encodedProjectId = encodeURIComponent(String(projectId));
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/requirements?project=${encodedProjectId}&_limit=-1`
+    );
+  }
+
+  async listProjectCustomFields(projectId: number) {
+    const encodedProjectId = encodeURIComponent(String(projectId));
+    const entity = encodeURIComponent("TestCase");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/customfields?project=${encodedProjectId}&entity=${entity}&_limit=-1`
+    );
   }
 }
 

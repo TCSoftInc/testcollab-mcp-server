@@ -22,7 +22,10 @@ const stepSchema = z.object({
 });
 
 const customFieldSchema = z.object({
-  id: z.number().describe("Custom field ID"),
+  id: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe("Custom field ID (number or name string)"),
   name: z.string().describe("Custom field system name"),
   label: z.string().optional().describe("Custom field display label"),
   value: z
@@ -41,7 +44,11 @@ export const createTestCaseSchema = z.object({
     .optional()
     .describe("Project ID (uses TC_DEFAULT_PROJECT env var if not specified)"),
   title: z.string().min(1).describe("Test case title (required)"),
-  suite_id: z.number().optional().describe("Suite ID to place the test case in"),
+  suite: z.string().optional().describe("Suite title (alias for suite_id)"),
+  suite_id: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe("Suite ID or suite title"),
   description: z.string().optional().describe("Test case description (HTML supported)"),
   priority: z
     .number()
@@ -54,13 +61,13 @@ export const createTestCaseSchema = z.object({
     .optional()
     .describe("Array of test steps with actions and expected results"),
   tags: z
-    .array(z.number())
+    .array(z.union([z.number(), z.string()]))
     .optional()
-    .describe("Array of tag IDs to associate"),
+    .describe("Array of tag IDs or names to associate"),
   requirements: z
-    .array(z.number())
+    .array(z.union([z.number(), z.string()]))
     .optional()
-    .describe("Array of requirement IDs to link"),
+    .describe("Array of requirement IDs or names to link"),
   custom_fields: z
     .array(customFieldSchema)
     .optional()
@@ -86,13 +93,14 @@ Required fields:
 
 Optional fields:
 - project_id: Project ID (uses TC_DEFAULT_PROJECT if not specified)
-- suite_id: Suite to place the test case in
+- suite: Suite title (alias for suite_id)
+- suite_id: Suite ID or suite title
 - description: HTML-formatted description
 - priority: 0 (Low), 1 (Normal), 2 (High) - default is 1
 - steps: Array of { step: "action", expected_result: "result" }
-- tags: Array of tag IDs
-- requirements: Array of requirement IDs
-- custom_fields: Array of custom field objects
+- tags: Array of tag IDs or names
+- requirements: Array of requirement IDs or names
+- custom_fields: Array of custom field objects (id optional if name provided)
 - attachments: Array of file IDs
 
 Custom field format:
@@ -132,9 +140,13 @@ Example:
         type: "string",
         description: "Test case title (required)",
       },
+      suite: {
+        type: "string",
+        description: "Suite title (alias for suite_id)",
+      },
       suite_id: {
-        type: "number",
-        description: "Suite ID to place the test case in",
+        oneOf: [{ type: "number" }, { type: "string" }],
+        description: "Suite ID or suite title",
       },
       description: {
         type: "string",
@@ -165,13 +177,13 @@ Example:
       },
       tags: {
         type: "array",
-        description: "Array of tag IDs",
-        items: { type: "number" },
+        description: "Array of tag IDs or names",
+        items: { oneOf: [{ type: "number" }, { type: "string" }] },
       },
       requirements: {
         type: "array",
-        description: "Array of requirement IDs",
-        items: { type: "number" },
+        description: "Array of requirement IDs or names",
+        items: { oneOf: [{ type: "number" }, { type: "string" }] },
       },
       custom_fields: {
         type: "array",
@@ -179,7 +191,10 @@ Example:
         items: {
           type: "object",
           properties: {
-            id: { type: "number", description: "Custom field ID" },
+            id: {
+              oneOf: [{ type: "number" }, { type: "string" }],
+              description: "Custom field ID or name",
+            },
             name: { type: "string", description: "Custom field system name" },
             label: { type: "string", description: "Custom field display label" },
             value: {
@@ -196,7 +211,7 @@ Example:
             },
             color: { type: "string", description: "Color for the value label" },
           },
-          required: ["id", "name", "value"],
+          required: ["name", "value"],
         },
       },
       attachments: {
@@ -212,6 +227,45 @@ Example:
 // ============================================================================
 // Tool Handler
 // ============================================================================
+
+const numericIdPattern = /^\d+$/;
+
+const toNumberId = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && numericIdPattern.test(trimmed)) {
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+  }
+  return undefined;
+};
+
+const isNonNumericString = (value: unknown): value is string => {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !numericIdPattern.test(trimmed);
+};
+
+const getField = <T>(item: unknown, key: string): T | undefined => {
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+  const record = item as Record<string, unknown>;
+  if (record[key] !== undefined) {
+    return record[key] as T;
+  }
+  const attributes = record["attributes"];
+  if (attributes && typeof attributes === "object") {
+    return (attributes as Record<string, unknown>)[key] as T | undefined;
+  }
+  return undefined;
+};
 
 export async function handleCreateTestCase(
   args: unknown
@@ -238,6 +292,7 @@ export async function handleCreateTestCase(
   const {
     project_id,
     title,
+    suite,
     suite_id,
     description,
     priority,
@@ -273,26 +328,169 @@ export async function handleCreateTestCase(
   try {
     const client = getApiClient();
 
+    const suiteInput = suite_id ?? suite;
+    const suiteNeedsLookup = isNonNumericString(suiteInput);
+    const tagsNeedLookup = tags?.some(isNonNumericString) ?? false;
+    const requirementsNeedLookup =
+      requirements?.some(isNonNumericString) ?? false;
+    const customFieldsNeedLookup =
+      custom_fields?.some((cf) => cf.id === undefined || isNonNumericString(cf.id)) ??
+      false;
+
+    const [suitesList, tagsList, requirementsList, customFieldsList] =
+      await Promise.all([
+        suiteNeedsLookup
+          ? client.listSuites(resolvedProjectId)
+          : Promise.resolve(null),
+        tagsNeedLookup
+          ? client.listTags(resolvedProjectId)
+          : Promise.resolve(null),
+        requirementsNeedLookup
+          ? client.listRequirements(resolvedProjectId)
+          : Promise.resolve(null),
+        customFieldsNeedLookup
+          ? client.listProjectCustomFields(resolvedProjectId)
+          : Promise.resolve(null),
+      ]);
+
+    let resolvedSuiteId = toNumberId(suiteInput);
+    if (suiteNeedsLookup && suitesList) {
+      const match = suitesList.find(
+        (suite) => getField<string>(suite, "title") === suiteInput
+      );
+      resolvedSuiteId = toNumberId(match ? getField(match, "id") : undefined);
+      if (resolvedSuiteId === undefined) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: {
+                  code: "SUITE_NOT_FOUND",
+                  message: `Suite not found with title "${suiteInput}" in that project`,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    }
+
+    const resolvedTags = tags
+      ? tags
+          .map((tag) => {
+            const numericId = toNumberId(tag);
+            if (numericId !== undefined) {
+              return numericId;
+            }
+            if (!tagsList || typeof tag !== "string") {
+              return undefined;
+            }
+            const match = tagsList.find(
+              (t) => getField<string>(t, "name") === tag
+            );
+            return toNumberId(match ? getField(match, "id") : undefined);
+          })
+          .filter((id): id is number => typeof id === "number")
+      : undefined;
+
+    const resolvedRequirements = requirements
+      ? requirements
+          .map((req) => {
+            const numericId = toNumberId(req);
+            if (numericId !== undefined) {
+              return numericId;
+            }
+            if (!requirementsList || typeof req !== "string") {
+              return undefined;
+            }
+            const match = requirementsList.find((r) => {
+              const key = getField<string>(r, "requirement_key");
+              const reqId = getField<string>(r, "requirement_id");
+              const title = getField<string>(r, "title");
+              return key === req || reqId === req || title === req;
+            });
+            return toNumberId(match ? getField(match, "id") : undefined);
+          })
+          .filter((id): id is number => typeof id === "number")
+      : undefined;
+
+    const customFieldMap = customFieldsList
+      ? customFieldsList.reduce((map, cf) => {
+          const name = getField<string>(cf, "name");
+          const id = toNumberId(getField(cf, "id"));
+          if (!name || id === undefined) {
+            return map;
+          }
+          map.set(name, {
+            id,
+            name,
+            label: getField<string>(cf, "label"),
+          });
+          return map;
+        }, new Map<string, { id: number; name: string; label?: string }>())
+      : null;
+
+    const resolvedCustomFields = custom_fields
+      ? custom_fields
+          .map((cf) => {
+            const numericId = toNumberId(cf.id);
+            if (numericId !== undefined) {
+              return {
+                id: numericId,
+                name: cf.name,
+                value: cf.value,
+                ...(cf.label !== undefined ? { label: cf.label } : {}),
+                ...(cf.valueLabel !== undefined ? { valueLabel: cf.valueLabel } : {}),
+                ...(cf.color !== undefined ? { color: cf.color } : {}),
+              };
+            }
+            if (!customFieldMap) {
+              return undefined;
+            }
+            const match = customFieldMap.get(cf.name);
+            if (!match) {
+              return undefined;
+            }
+            return {
+              id: match.id,
+              name: match.name,
+              value: cf.value,
+              ...(cf.label !== undefined ? { label: cf.label } : {}),
+              ...(cf.valueLabel !== undefined ? { valueLabel: cf.valueLabel } : {}),
+              ...(cf.color !== undefined ? { color: cf.color } : {}),
+              ...(cf.label === undefined && match.label !== undefined
+                ? { label: match.label }
+                : {}),
+            };
+          })
+          .filter(
+            (
+              cf
+            ): cf is {
+              id: number;
+              name: string;
+              label?: string;
+              value: string | number | null;
+              valueLabel?: string;
+              color?: string;
+            } => cf !== undefined
+          )
+      : undefined;
+
     const result = await client.createTestCase({
       projectId: resolvedProjectId,
       title,
-      suiteId: suite_id,
+      suiteId: resolvedSuiteId,
       description,
       priority,
       steps: steps?.map((s) => ({
         step: s.step,
-        expectedResult: s.expected_result,
+        expected_result: s.expected_result,
       })),
-      tags,
-      requirements,
-      customFields: custom_fields?.map((cf) => ({
-        id: cf.id,
-        name: cf.name,
-        label: cf.label,
-        value: cf.value,
-        valueLabel: cf.valueLabel,
-        color: cf.color,
-      })),
+      tags: resolvedTags,
+      requirements: resolvedRequirements,
+      customFields: resolvedCustomFields,
       attachments,
     });
 

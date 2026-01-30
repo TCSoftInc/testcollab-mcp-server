@@ -37,7 +37,11 @@ const numberFilterSchema = z.object({
     "lessThanOrEqual",
     "inRange",
   ]),
-  filter: z.union([z.number(), z.array(z.number())]),
+  filter: z.union([
+    z.number(),
+    z.string(),
+    z.array(z.union([z.number(), z.string()])),
+  ]),
   filterTo: z.number().optional(),
 });
 
@@ -73,7 +77,7 @@ const testCaseFilterSchema = z
     under_review: numberFilterSchema.optional(),
     is_automated: numberFilterSchema.optional(),
     automation_status: textFilterSchema.optional(),
-    last_run_status: numberFilterSchema.optional(),
+    last_run_status: textFilterSchema.optional(),
     run_count: numberFilterSchema.optional(),
     avg_execution_time: numberFilterSchema.optional(),
     failure_rate: numberFilterSchema.optional(),
@@ -95,9 +99,9 @@ export function registerTools(server: McpServer): void {
 
 Filter fields include:
 - id, title, description, steps, priority (0=Low, 1=Normal, 2=High)
-- suite, created_by, reviewer, poster (user IDs)
+- suite (ID or title), created_by, reviewer, poster (user IDs)
 - created_at, updated_at, last_run_on (dates)
-- tags, requirements (arrays of IDs)
+- tags, requirements (arrays of IDs or names)
 - under_review, is_automated (0 or 1)
 - run_count, avg_execution_time, failure_rate
 
@@ -113,7 +117,10 @@ Example filter:
 }`,
     {
       project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT env var is set)"),
-      suite_id: z.number().optional().describe("Filter by suite ID"),
+      suite_id: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Filter by suite ID or title"),
       filter: testCaseFilterSchema
         .optional()
         .describe("Filter conditions object"),
@@ -146,7 +153,7 @@ Example filter:
     `Create a new test case in TestCollab.
 
 Required: title
-Optional: project_id, suite_id, description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
+Optional: project_id, suite (title), suite_id (id or title), description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
 
 Steps format: [{ "step": "action", "expected_result": "result" }]
 
@@ -164,23 +171,30 @@ Example:
     {
       project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT is set)"),
       title: z.string().min(1).describe("Test case title (required)"),
-      suite_id: z.number().optional().describe("Suite ID to place the test case in"),
+      suite: z.string().optional().describe("Suite title (alias for suite_id)"),
+      suite_id: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Suite ID or suite title"),
       description: z.string().optional().describe("Test case description (HTML supported)"),
       priority: z.number().min(0).max(2).optional().describe("Priority: 0=Low, 1=Normal, 2=High"),
       steps: z.array(z.object({
         step: z.string().describe("Step action"),
         expected_result: z.string().optional().describe("Expected result"),
       })).optional().describe("Array of test steps"),
-      tags: z.array(z.number()).optional().describe("Array of tag IDs"),
-      requirements: z.array(z.number()).optional().describe("Array of requirement IDs"),
+      tags: z.array(z.union([z.number(), z.string()])).optional().describe("Array of tag IDs or names"),
+      requirements: z
+        .array(z.union([z.number(), z.string()]))
+        .optional()
+        .describe("Array of requirement IDs or names"),
       custom_fields: z.array(z.object({
-        id: z.number().describe("Custom field ID"),
+        id: z.union([z.number(), z.string()]).optional().describe("Custom field ID or name"),
         name: z.string().describe("Custom field system name"),
         label: z.string().optional().describe("Custom field display label"),
         value: z.union([z.string(), z.number(), z.null()]).describe("Custom field value"),
         valueLabel: z.string().optional().describe("Display label for value"),
         color: z.string().optional().describe("Color for value label"),
-      })).optional().describe("Array of custom field values"),
+      })).optional().describe("Array of custom field values (id optional if name provided)"),
       attachments: z.array(z.string()).optional().describe("Array of attachment file IDs"),
     },
     async (args) => {
@@ -217,23 +231,32 @@ Example:
       id: z.number().describe("Test case ID to update (required)"),
       project_id: z.number().optional().describe("Project ID (optional if default is set)"),
       title: z.string().min(1).optional().describe("New test case title"),
-      suite_id: z.number().optional().describe("Move to a different suite"),
+      suite_id: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Move to a different suite by ID or title"),
       description: z.string().optional().describe("New description (HTML supported)"),
       priority: z.number().min(0).max(2).optional().describe("New priority: 0=Low, 1=Normal, 2=High"),
       steps: z.array(z.object({
         step: z.string().describe("Step action"),
         expected_result: z.string().optional().describe("Expected result"),
       })).optional().describe("Replace all steps"),
-      tags: z.array(z.number()).optional().describe("Replace tags with these IDs"),
-      requirements: z.array(z.number()).optional().describe("Replace requirements with these IDs"),
+      tags: z
+        .array(z.union([z.number(), z.string()]))
+        .optional()
+        .describe("Replace tags with these IDs or names"),
+      requirements: z
+        .array(z.union([z.number(), z.string()]))
+        .optional()
+        .describe("Replace requirements with these IDs or names"),
       custom_fields: z.array(z.object({
-        id: z.number().describe("Custom field ID"),
+        id: z.union([z.number(), z.string()]).optional().describe("Custom field ID or name"),
         name: z.string().describe("Custom field system name"),
         label: z.string().optional().describe("Custom field display label"),
         value: z.union([z.string(), z.number(), z.null()]).describe("Custom field value"),
         valueLabel: z.string().optional().describe("Display label for value"),
         color: z.string().optional().describe("Color for value label"),
-      })).optional().describe("Update custom field values"),
+      })).optional().describe("Update custom field values (id optional if name provided)"),
       attachments: z.array(z.string()).optional().describe("Replace attachments with these file IDs"),
     },
     async (args) => {
