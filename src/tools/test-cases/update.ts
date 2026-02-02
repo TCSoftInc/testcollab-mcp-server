@@ -273,6 +273,44 @@ const getField = <T>(item: unknown, key: string): T | undefined => {
   return undefined;
 };
 
+const unwrapApiData = (value: unknown): unknown => {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const data = record["data"];
+  return data && typeof data === "object" ? data : value;
+};
+
+const extractId = (value: unknown): number | undefined => {
+  const direct = toNumberId(value);
+  if (direct !== undefined) {
+    return direct;
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const recordId = toNumberId(record["id"]);
+  if (recordId !== undefined) {
+    return recordId;
+  }
+  const data = record["data"];
+  if (data && typeof data === "object") {
+    return toNumberId((data as Record<string, unknown>)["id"]);
+  }
+  return undefined;
+};
+
+const getCompanyIdFromProject = (project: unknown): number | undefined => {
+  const normalized = unwrapApiData(project);
+  const rawCompany =
+    getField(normalized, "company") ??
+    getField(normalized, "company_id") ??
+    getField(normalized, "companyId");
+  return extractId(rawCompany);
+};
+
 export async function handleUpdateTestCase(
   args: unknown
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
@@ -350,19 +388,31 @@ export async function handleUpdateTestCase(
       custom_fields !== null &&
       custom_fields?.some((cf) => cf.id === undefined || isNonNumericString(cf.id));
 
-    const [suitesList, tagsList, requirementsList, customFieldsList] =
-      await Promise.all([
+    const needsCompanyId =
+      tagsNeedLookup || requirementsNeedLookup || customFieldsNeedLookup;
+
+    const [suitesList, projectForCompany] = await Promise.all([
       suiteNeedsLookup
         ? client.listSuites(resolvedProjectId)
         : Promise.resolve(null),
+      needsCompanyId
+        ? client.getProject(resolvedProjectId)
+        : Promise.resolve(null),
+    ]);
+
+    const companyId = projectForCompany
+      ? getCompanyIdFromProject(projectForCompany)
+      : undefined;
+
+    const [tagsList, requirementsList, customFieldsList] = await Promise.all([
       tagsNeedLookup
-        ? client.listTags(resolvedProjectId)
+        ? client.listTags(resolvedProjectId, companyId)
         : Promise.resolve(null),
       requirementsNeedLookup
-        ? client.listRequirements(resolvedProjectId)
+        ? client.listRequirements(resolvedProjectId, companyId)
         : Promise.resolve(null),
       customFieldsNeedLookup
-        ? client.listProjectCustomFields(resolvedProjectId)
+        ? client.listProjectCustomFields(resolvedProjectId, companyId)
         : Promise.resolve(null),
     ]);
 

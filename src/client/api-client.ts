@@ -197,6 +197,17 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Get a single project by ID (raw API call)
+   */
+  async getProject(projectId: number): Promise<Record<string, unknown>> {
+    const encodedProjectId = encodeURIComponent(String(projectId));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/projects/${encodedProjectId}`
+    );
+  }
+
+  /**
    * Create a new test case using raw API (supports custom fields)
    */
   async createTestCase(data: {
@@ -341,28 +352,44 @@ export class TestCollabApiClient {
     });
   }
 
-  async listTags(projectId: number) {
-    const encodedProjectId = encodeURIComponent(String(projectId));
+  async listTags(projectId: number, companyId?: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    if (companyId !== undefined) {
+      params.set("company", String(companyId));
+    }
+    params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",
-      `/tags?project=${encodedProjectId}&_limit=-1`
+      `/tags?${params.toString()}`
     );
   }
 
-  async listRequirements(projectId: number) {
-    const encodedProjectId = encodeURIComponent(String(projectId));
+  async listRequirements(projectId: number, companyId?: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    if (companyId !== undefined) {
+      params.set("company", String(companyId));
+    }
+    params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",
-      `/requirements?project=${encodedProjectId}&_limit=-1`
+      `/requirements?${params.toString()}`
     );
   }
 
-  async listProjectCustomFields(projectId: number) {
-    const encodedProjectId = encodeURIComponent(String(projectId));
+  async listProjectCustomFields(projectId: number, companyId?: number) {
     const entity = encodeURIComponent("TestCase");
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    if (companyId !== undefined) {
+      params.set("company", String(companyId));
+    }
+    params.set("entity", entity);
+    params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",
-      `/customfields?project=${encodedProjectId}&entity=${entity}&_limit=-1`
+      `/customfields?${params.toString()}`
     );
   }
 }
