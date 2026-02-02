@@ -60,6 +60,8 @@ const filterConditionSchema = z.union([
   dateFilterSchema,
 ]);
 
+const lookupFilterSchema = z.union([textFilterSchema, numberFilterSchema]);
+
 const sortModelSchema = z.object({
   colId: z.string(),
   sort: z.enum(["asc", "desc"]),
@@ -72,15 +74,15 @@ const testCaseFilterSchema = z
     description: textFilterSchema.optional(),
     steps: textFilterSchema.optional(),
     priority: numberFilterSchema.optional(),
-    suite: numberFilterSchema.optional(),
+    suite: lookupFilterSchema.optional(),
     created_by: numberFilterSchema.optional(),
     reviewer: numberFilterSchema.optional(),
     poster: numberFilterSchema.optional(),
     created_at: dateFilterSchema.optional(),
     updated_at: dateFilterSchema.optional(),
     last_run_on: dateFilterSchema.optional(),
-    tags: numberFilterSchema.optional(),
-    requirements: numberFilterSchema.optional(),
+    tags: lookupFilterSchema.optional(),
+    requirements: lookupFilterSchema.optional(),
     issue_key: textFilterSchema.optional(),
     under_review: numberFilterSchema.optional(),
     is_automated: numberFilterSchema.optional(),
@@ -103,56 +105,20 @@ const normalizeListTestCasesInput = (value: unknown): unknown => {
   }
   const normalizedFilter = { ...(filter as Record<string, unknown>) };
 
-  const normalizeSuiteFilter = () => {
-    const raw = normalizedFilter["suite"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      return;
-    }
-    const rawFilter = { ...(raw as Record<string, unknown>) };
-    if (rawFilter.filterType !== "text") {
-      return;
-    }
-    const type = rawFilter.type;
-    if (type === "equals" || type === "contains") {
-      rawFilter.filterType = "number";
-      rawFilter.type = "equals";
-    } else if (type === "notEqual" || type === "notContains") {
-      rawFilter.filterType = "number";
-      rawFilter.type = "notEqual";
-    } else {
-      return;
-    }
-    normalizedFilter["suite"] = rawFilter;
-  };
-
-  const normalizeLookupFilter = (key: "tags" | "requirements") => {
+  const normalizeLookupFilterValues = (key: "tags" | "requirements") => {
     const raw = normalizedFilter[key];
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return;
     }
     const rawFilter = { ...(raw as Record<string, unknown>) };
-    if (rawFilter.filterType !== "text") {
-      return;
-    }
-    const type = rawFilter.type;
-    if (type === "equals" || type === "contains") {
-      rawFilter.filterType = "number";
-      rawFilter.type = "equals";
-    } else if (type === "notEqual" || type === "notContains") {
-      rawFilter.filterType = "number";
-      rawFilter.type = "notEqual";
-    } else {
-      return;
-    }
     if (rawFilter.filter !== undefined && !Array.isArray(rawFilter.filter)) {
       rawFilter.filter = [rawFilter.filter];
+      normalizedFilter[key] = rawFilter;
     }
-    normalizedFilter[key] = rawFilter;
   };
 
-  normalizeSuiteFilter();
-  normalizeLookupFilter("tags");
-  normalizeLookupFilter("requirements");
+  normalizeLookupFilterValues("tags");
+  normalizeLookupFilterValues("requirements");
 
   input.filter = normalizedFilter;
   return input;
@@ -351,6 +317,105 @@ const normalizeTagMatchType = (value: unknown): "contains" | "notContains" => {
   return "contains";
 };
 
+type TextMatchType = "equals" | "contains" | "startsWith" | "endsWith";
+
+type ResolvedTextMatch = {
+  negative: boolean;
+  match: TextMatchType;
+};
+
+const resolveTextMatch = (value: unknown): ResolvedTextMatch | null => {
+  if (value === undefined) {
+    return { negative: false, match: "equals" };
+  }
+  switch (value) {
+    case "equals":
+      return { negative: false, match: "equals" };
+    case "contains":
+      return { negative: false, match: "contains" };
+    case "startsWith":
+      return { negative: false, match: "startsWith" };
+    case "endsWith":
+      return { negative: false, match: "endsWith" };
+    case "notEqual":
+    case "notEquals":
+      return { negative: true, match: "equals" };
+    case "notContains":
+      return { negative: true, match: "contains" };
+    case "isBlank":
+      return null;
+    default:
+      return null;
+  }
+};
+
+const matchTextValue = (
+  candidate: unknown,
+  rawValue: string,
+  matchType: TextMatchType
+): boolean => {
+  if (typeof candidate !== "string") {
+    return false;
+  }
+  const candidateValue = candidate.trim();
+  const filterValue = rawValue.trim();
+  if (filterValue.length === 0) {
+    return false;
+  }
+  switch (matchType) {
+    case "equals":
+      return candidateValue === filterValue;
+    case "contains":
+      return candidateValue.includes(filterValue);
+    case "startsWith":
+      return candidateValue.startsWith(filterValue);
+    case "endsWith":
+      return candidateValue.endsWith(filterValue);
+    default:
+      return false;
+  }
+};
+
+const resolveLookupIds = <T>(
+  values: unknown[],
+  list: T[] | null,
+  matchType: TextMatchType,
+  getCandidates: (item: T) => Array<string | undefined>
+): { ids: number[]; missing: string[] } => {
+  const ids = new Set<number>();
+  const missing: string[] = [];
+
+  values.forEach((value) => {
+    const numericId = toNumberId(value);
+    if (numericId !== undefined) {
+      ids.add(numericId);
+      return;
+    }
+    if (typeof value !== "string") {
+      return;
+    }
+    if (!list) {
+      missing.push(value);
+      return;
+    }
+    const matches = list.filter((item) =>
+      getCandidates(item).some((candidate) =>
+        matchTextValue(candidate, value, matchType)
+      )
+    );
+    const matchedIds = matches
+      .map((item) => extractId(item))
+      .filter((id): id is number => typeof id === "number");
+    if (matchedIds.length === 0) {
+      missing.push(value);
+      return;
+    }
+    matchedIds.forEach((id) => ids.add(id));
+  });
+
+  return { ids: Array.from(ids), missing };
+};
+
 const standardFilterKeys = new Set([
   "id",
   "title",
@@ -505,157 +570,222 @@ export async function handleListTestCases(
       ? { ...filter }
       : undefined;
 
-    const suiteFilter = resolvedFilter?.suite as { filter?: unknown } | undefined;
+    const suiteFilter = resolvedFilter?.suite as {
+      filter?: unknown;
+      filterType?: unknown;
+      type?: unknown;
+    } | undefined;
     if (suiteFilter && suiteFilter.filter !== undefined) {
       const rawValues = toArray(suiteFilter.filter);
-      const missingSuites: string[] = [];
-      const resolvedIds = rawValues
-        .map((value) => {
-          const numericId = toNumberId(value);
-          if (numericId !== undefined) {
-            return numericId;
-          }
-          if (typeof value !== "string") {
-            return undefined;
-          }
-          if (!suitesList) {
-            missingSuites.push(value);
-            return undefined;
-          }
-          const match = suitesList.find(
-            (suite) => getField<string>(suite, "title") === value
-          );
-          const id = toNumberId(match ? getField(match, "id") : undefined);
-          if (id === undefined) {
-            missingSuites.push(value);
-          }
-          return id;
-        })
-        .filter((id): id is number => typeof id === "number");
-      if (missingSuites.length > 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: {
-                  code: "SUITE_NOT_FOUND",
-                  message: `Suite not found with title "${missingSuites.join(", ")}" in that project`,
-                },
-              }),
-            },
-          ],
-        };
-      }
-      if (resolvedIds.length > 0 && resolvedFilter) {
-        resolvedFilter.suite = {
-          ...suiteFilter,
-          filter: resolvedIds.length === 1 ? resolvedIds[0] : resolvedIds,
-        };
+      const shouldLookupByText =
+        suiteFilter.filterType === "text" || rawValues.some(isNonNumericString);
+
+      if (shouldLookupByText) {
+        const match = resolveTextMatch(suiteFilter.type);
+        if (!match) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: {
+                    code: "UNSUPPORTED_FILTER",
+                    message:
+                      "Suite text filter type is not supported for lookups. Use equals/contains/startsWith/endsWith or notEqual/notContains.",
+                  },
+                }),
+              },
+            ],
+          };
+        }
+        const { ids: resolvedIds, missing: missingSuites } = resolveLookupIds(
+          rawValues,
+          suitesList,
+          match.match,
+          (suite) => [getField<string>(suite, "title")]
+        );
+        if (missingSuites.length > 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: {
+                    code: "SUITE_NOT_FOUND",
+                    message: `Suite not found with title "${missingSuites.join(", ")}" in that project`,
+                  },
+                }),
+              },
+            ],
+          };
+        }
+        if (resolvedIds.length > 0 && resolvedFilter) {
+          resolvedFilter.suite = {
+            ...suiteFilter,
+            filterType: "number",
+            type: match.negative ? "notEqual" : "equals",
+            filter: resolvedIds.length === 1 ? resolvedIds[0] : resolvedIds,
+          };
+        }
+      } else {
+        const resolvedIds = rawValues
+          .map((value) => toNumberId(value))
+          .filter((id): id is number => typeof id === "number");
+        if (resolvedIds.length > 0 && resolvedFilter) {
+          resolvedFilter.suite = {
+            ...suiteFilter,
+            filterType: "number",
+            filter: resolvedIds.length === 1 ? resolvedIds[0] : resolvedIds,
+          };
+        }
       }
     }
 
-    if (resolvedFilter?.tags && resolvedFilter.tags.filter !== undefined) {
-      const rawFilter = resolvedFilter.tags.filter;
-      const rawValues = toArray(rawFilter);
-      const missingTags: string[] = [];
-      const resolvedIds = rawValues
-        .map((value) => {
-          const numericId = toNumberId(value);
-          if (numericId !== undefined) {
-            return numericId;
-          }
-          if (typeof value !== "string") {
-            return undefined;
-          }
-          if (!tagsList) {
-            missingTags.push(value);
-            return undefined;
-          }
-          const match = tagsList.find(
-            (tag) => getField<string>(tag, "name") === value
-          );
-          const id = toNumberId(match ? getField(match, "id") : undefined);
-          if (id === undefined) {
-            missingTags.push(value);
-          }
-          return id;
-        })
-        .filter((id): id is number => typeof id === "number");
-      if (missingTags.length > 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: {
-                  code: "TAG_NOT_FOUND",
-                  message: `Tag(s) not found: ${missingTags.join(", ")}`,
-                },
-              }),
-            },
-          ],
-        };
-      }
-      resolvedFilter.tags = {
-        ...resolvedFilter.tags,
-        filterType: "number",
-        type: normalizeTagMatchType(resolvedFilter.tags.type),
-        filter: resolvedIds,
+    if (resolvedFilter?.tags) {
+      const tagsFilter = resolvedFilter.tags as {
+        filter?: unknown;
+        filterType?: unknown;
+        type?: unknown;
       };
+      if (tagsFilter.filter !== undefined) {
+        const rawValues = toArray(tagsFilter.filter);
+        const shouldLookupByText =
+          tagsFilter.filterType === "text" ||
+          rawValues.some(isNonNumericString);
+
+        if (shouldLookupByText) {
+          const match = resolveTextMatch(tagsFilter.type);
+          if (!match) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: {
+                      code: "UNSUPPORTED_FILTER",
+                      message:
+                        "Tag text filter type is not supported for lookups. Use equals/contains/startsWith/endsWith or notEqual/notContains.",
+                    },
+                  }),
+                },
+              ],
+            };
+          }
+          const { ids: resolvedIds, missing: missingTags } = resolveLookupIds(
+            rawValues,
+            tagsList,
+            match.match,
+            (tag) => [getField<string>(tag, "name")]
+          );
+          if (missingTags.length > 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: {
+                      code: "TAG_NOT_FOUND",
+                      message: `Tag(s) not found: ${missingTags.join(", ")}`,
+                    },
+                  }),
+                },
+              ],
+            };
+          }
+          resolvedFilter.tags = {
+            ...tagsFilter,
+            filterType: "number",
+            type: match.negative ? "notContains" : "contains",
+            filter: resolvedIds,
+          };
+        } else {
+          const resolvedIds = rawValues
+            .map((value) => toNumberId(value))
+            .filter((id): id is number => typeof id === "number");
+          resolvedFilter.tags = {
+            ...tagsFilter,
+            filterType: "number",
+            type: normalizeTagMatchType(tagsFilter.type),
+            filter: resolvedIds,
+          };
+        }
+      }
     }
 
-    if (resolvedFilter?.requirements && resolvedFilter.requirements.filter !== undefined) {
-      const rawFilter = resolvedFilter.requirements.filter;
-      const rawValues = toArray(rawFilter);
-      const missingRequirements: string[] = [];
-      const resolvedIds = rawValues
-        .map((value) => {
-          const numericId = toNumberId(value);
-          if (numericId !== undefined) {
-            return numericId;
-          }
-          if (typeof value !== "string") {
-            return undefined;
-          }
-          if (!requirementsList) {
-            missingRequirements.push(value);
-            return undefined;
-          }
-          const match = requirementsList.find((req) => {
-            const key = getField<string>(req, "requirement_key");
-            const reqId = getField<string>(req, "requirement_id");
-            const title = getField<string>(req, "title");
-            return key === value || reqId === value || title === value;
-          });
-          const id = toNumberId(match ? getField(match, "id") : undefined);
-          if (id === undefined) {
-            missingRequirements.push(value);
-          }
-          return id;
-        })
-        .filter((id): id is number => typeof id === "number");
-      if (missingRequirements.length > 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: {
-                  code: "REQUIREMENT_NOT_FOUND",
-                  message: `Requirement(s) not found: ${missingRequirements.join(", ")}`,
-                },
-              }),
-            },
-          ],
-        };
-      }
-      resolvedFilter.requirements = {
-        ...resolvedFilter.requirements,
-        filterType: "number",
-        type: normalizeTagMatchType(resolvedFilter.requirements.type),
-        filter: resolvedIds,
+    if (resolvedFilter?.requirements) {
+      const requirementsFilter = resolvedFilter.requirements as {
+        filter?: unknown;
+        filterType?: unknown;
+        type?: unknown;
       };
+      if (requirementsFilter.filter !== undefined) {
+        const rawValues = toArray(requirementsFilter.filter);
+        const shouldLookupByText =
+          requirementsFilter.filterType === "text" ||
+          rawValues.some(isNonNumericString);
+
+        if (shouldLookupByText) {
+          const match = resolveTextMatch(requirementsFilter.type);
+          if (!match) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: {
+                      code: "UNSUPPORTED_FILTER",
+                      message:
+                        "Requirement text filter type is not supported for lookups. Use equals/contains/startsWith/endsWith or notEqual/notContains.",
+                    },
+                  }),
+                },
+              ],
+            };
+          }
+          const { ids: resolvedIds, missing: missingRequirements } =
+            resolveLookupIds(
+              rawValues,
+              requirementsList,
+              match.match,
+              (req) => [
+                getField<string>(req, "requirement_key"),
+                getField<string>(req, "requirement_id"),
+                getField<string>(req, "title"),
+              ]
+            );
+          if (missingRequirements.length > 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: {
+                      code: "REQUIREMENT_NOT_FOUND",
+                      message: `Requirement(s) not found: ${missingRequirements.join(", ")}`,
+                    },
+                  }),
+                },
+              ],
+            };
+          }
+          resolvedFilter.requirements = {
+            ...requirementsFilter,
+            filterType: "number",
+            type: match.negative ? "notContains" : "contains",
+            filter: resolvedIds,
+          };
+        } else {
+          const resolvedIds = rawValues
+            .map((value) => toNumberId(value))
+            .filter((id): id is number => typeof id === "number");
+          resolvedFilter.requirements = {
+            ...requirementsFilter,
+            filterType: "number",
+            type: normalizeTagMatchType(requirementsFilter.type),
+            filter: resolvedIds,
+          };
+        }
+      }
     }
 
     if (customFieldsNeedLookup && resolvedFilter && customFieldsList) {
