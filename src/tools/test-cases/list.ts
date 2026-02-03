@@ -62,6 +62,22 @@ const filterConditionSchema = z.union([
 
 const lookupFilterSchema = z.union([textFilterSchema, numberFilterSchema]);
 
+const tagsFilterSchema = z.object({
+  filterType: z.literal("number"),
+  type: z.enum([
+    "equals",
+    "notEqual",
+    "notEquals",
+    "contains",
+    "notContains",
+  ]),
+  filter: z.union([
+    z.number(),
+    z.string(),
+    z.array(z.union([z.number(), z.string()])),
+  ]),
+});
+
 const sortModelSchema = z.object({
   colId: z.string(),
   sort: z.enum(["asc", "desc"]),
@@ -81,7 +97,7 @@ const testCaseFilterSchema = z
     created_at: dateFilterSchema.optional(),
     updated_at: dateFilterSchema.optional(),
     last_run_on: dateFilterSchema.optional(),
-    tags: lookupFilterSchema.optional(),
+    tags: tagsFilterSchema.optional(),
     requirements: lookupFilterSchema.optional(),
     issue_key: textFilterSchema.optional(),
     under_review: numberFilterSchema.optional(),
@@ -515,14 +531,11 @@ export async function handleListTestCases(
         : [];
     const customFieldsNeedLookup = customFieldNameKeys.length > 0;
 
-    const needsCompanyId =
-      tagsNeedLookup || requirementsNeedLookup || customFieldsNeedLookup;
-
     const [suitesList, projectForCompany] = await Promise.all([
       suiteNeedsLookup
         ? client.listSuites(resolvedProjectId)
         : Promise.resolve(null),
-      needsCompanyId
+      customFieldsNeedLookup
         ? client.getProject(resolvedProjectId)
         : Promise.resolve(null),
     ]);
@@ -533,10 +546,10 @@ export async function handleListTestCases(
 
     const [tagsList, requirementsList, customFieldsList] = await Promise.all([
       tagsNeedLookup
-        ? client.listTags(resolvedProjectId, companyId)
+        ? client.listTags(resolvedProjectId)
         : Promise.resolve(null),
       requirementsNeedLookup
-        ? client.listRequirements(resolvedProjectId, companyId)
+        ? client.listRequirements(resolvedProjectId)
         : Promise.resolve(null),
       customFieldsNeedLookup
         ? client.listProjectCustomFields(resolvedProjectId, companyId)
@@ -649,32 +662,17 @@ export async function handleListTestCases(
       };
       if (tagsFilter.filter !== undefined) {
         const rawValues = toArray(tagsFilter.filter);
-        const shouldLookupByText =
-          tagsFilter.filterType === "text" ||
-          rawValues.some(isNonNumericString);
+        const numericIds = rawValues
+          .map((value) => toNumberId(value))
+          .filter((id): id is number => typeof id === "number");
+        const nameValues = rawValues.filter(isNonNumericString);
 
-        if (shouldLookupByText) {
-          const match = resolveTextMatch(tagsFilter.type);
-          if (!match) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({
-                    error: {
-                      code: "UNSUPPORTED_FILTER",
-                      message:
-                        "Tag text filter type is not supported for lookups. Use equals/contains/startsWith/endsWith or notEqual/notContains.",
-                    },
-                  }),
-                },
-              ],
-            };
-          }
-          const { ids: resolvedIds, missing: missingTags } = resolveLookupIds(
-            rawValues,
+        let resolvedIds = [...numericIds];
+        if (nameValues.length > 0) {
+          const { ids: nameIds, missing: missingTags } = resolveLookupIds(
+            nameValues,
             tagsList,
-            match.match,
+            "equals",
             (tag) => [getField<string>(tag, "name")]
           );
           if (missingTags.length > 0) {
@@ -692,16 +690,10 @@ export async function handleListTestCases(
               ],
             };
           }
-          resolvedFilter.tags = {
-            ...tagsFilter,
-            filterType: "number",
-            type: match.negative ? "notContains" : "contains",
-            filter: resolvedIds,
-          };
-        } else {
-          const resolvedIds = rawValues
-            .map((value) => toNumberId(value))
-            .filter((id): id is number => typeof id === "number");
+          resolvedIds = resolvedIds.concat(nameIds);
+        }
+
+        if (resolvedIds.length > 0) {
           resolvedFilter.tags = {
             ...tagsFilter,
             filterType: "number",
