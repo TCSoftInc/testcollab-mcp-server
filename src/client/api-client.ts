@@ -381,7 +381,7 @@ export class TestCollabApiClient {
   async listProjectCustomFields(projectId: number, companyId?: number) {
     const entity = encodeURIComponent("TestCase");
     const params = new URLSearchParams();
-    params.set("project", String(projectId));
+    params.set("projects", String(projectId));
     if (companyId !== undefined) {
       params.set("company", String(companyId));
     }
