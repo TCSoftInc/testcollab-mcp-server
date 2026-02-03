@@ -8,6 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getConfig } from "./config.js";
 import { registerTools } from "./tools/index.js";
+import { registerResources } from "./resources/index.js";
 
 /**
  * Create and configure the MCP server
@@ -20,8 +21,9 @@ export function createServer(): McpServer {
     version: config.serverVersion,
   });
 
-  // Register all tools
+  // Register all tools and resources
   registerTools(server);
+  registerResources(server);
 
   return server;
 }
