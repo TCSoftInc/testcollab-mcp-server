@@ -8,6 +8,7 @@ import { z } from "zod";
 import { getApiClient } from "../../client/api-client.js";
 import { getConfig } from "../../config.js";
 import { getRequestContext } from "../../context.js";
+import { getCachedProjectContext } from "../../resources/project-context.js";
 import type { TestCaseFilter } from "../../types/index.js";
 
 // ============================================================================
@@ -240,6 +241,34 @@ Filter types:
 // ============================================================================
 
 const numericIdPattern = /^\d+$/;
+const logPrefix = "[TestCollab MCP]";
+
+type SuiteNode = {
+  id: number;
+  title: string;
+  children?: SuiteNode[];
+};
+
+const flattenSuiteTree = (
+  suites: SuiteNode[] | null | undefined
+): SuiteNode[] | null => {
+  if (!Array.isArray(suites) || suites.length === 0) {
+    return null;
+  }
+  const list: SuiteNode[] = [];
+  const stack = [...suites];
+  while (stack.length > 0) {
+    const node = stack.shift();
+    if (!node) {
+      continue;
+    }
+    list.push(node);
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      stack.push(...node.children);
+    }
+  }
+  return list;
+};
 
 const toNumberId = (value: unknown): number | undefined => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -457,6 +486,98 @@ const standardFilterKeys = new Set([
   "failure_rate",
 ]);
 
+const customFieldKeyPattern = /^cf_(\d+)$/;
+
+const getCustomFieldIdFromKey = (key: string): number | undefined => {
+  const match = customFieldKeyPattern.exec(key);
+  if (!match) {
+    return undefined;
+  }
+  return toNumberId(match[1]);
+};
+
+const isDropdownFieldType = (value: unknown): boolean => {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "dropdown" || normalized === "multipleselect";
+};
+
+const getCustomFieldOptions = (field: unknown): unknown[] | null => {
+  const direct = getField<unknown[]>(field, "options");
+  if (Array.isArray(direct)) {
+    return direct;
+  }
+  const extra = getField<Record<string, unknown>>(field, "extra");
+  const extraOptions = getField<unknown[]>(extra, "options");
+  if (Array.isArray(extraOptions)) {
+    return extraOptions;
+  }
+  return null;
+};
+
+type OptionLookup = {
+  id: string;
+  label: string;
+};
+
+const buildOptionLookup = (options: unknown[]): OptionLookup[] => {
+  const lookups: OptionLookup[] = [];
+  options.forEach((option, index) => {
+    if (typeof option === "string") {
+      const label = option.trim();
+      if (!label) {
+        return;
+      }
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (typeof option === "number") {
+      const value = String(option);
+      lookups.push({ label: value, id: value });
+      return;
+    }
+    if (!option || typeof option !== "object") {
+      return;
+    }
+    const labelRaw =
+      getField<string>(option, "label") ?? getField<string>(option, "name");
+    const label = typeof labelRaw === "string" ? labelRaw.trim() : undefined;
+    const idRaw =
+      getField<string | number>(option, "id") ??
+      getField<string | number>(option, "value") ??
+      getField<string | number>(option, "systemValue");
+    const id =
+      idRaw !== undefined && idRaw !== null ? String(idRaw) : undefined;
+
+    if (label && id) {
+      lookups.push({ label, id });
+      return;
+    }
+    if (label && !id) {
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (!label && id) {
+      lookups.push({ label: id, id });
+    }
+  });
+  return lookups;
+};
+
+const getCustomFieldDisplayName = (field: unknown, fallback: string): string => {
+  const label = getField<string>(field, "label");
+  if (label && label.trim().length > 0) {
+    return label;
+  }
+  const name = getField<string>(field, "name");
+  if (name && name.trim().length > 0) {
+    return name;
+  }
+  return fallback;
+};
+
 export async function handleListTestCases(
   args: unknown
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
@@ -529,13 +650,63 @@ export async function handleListTestCases(
             (key) => !standardFilterKeys.has(key) && !key.startsWith("cf_")
           )
         : [];
+    const customFieldOptionsNeedLookup =
+      filter && typeof filter === "object"
+        ? Object.entries(filter).some(([key, value]) => {
+            if (standardFilterKeys.has(key)) {
+              return false;
+            }
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              return false;
+            }
+            const filterType = (value as Record<string, unknown>)["filterType"];
+            const filterValue = (value as Record<string, unknown>)["filter"];
+            if (filterType !== "text" || typeof filterValue !== "string") {
+              return false;
+            }
+            return isNonNumericString(filterValue);
+          })
+        : false;
     const customFieldsNeedLookup = customFieldNameKeys.length > 0;
 
-    const [suitesList, projectForCompany] = await Promise.all([
-      suiteNeedsLookup
+    const needsLookup =
+      suiteNeedsLookup ||
+      tagsNeedLookup ||
+      requirementsNeedLookup ||
+      customFieldsNeedLookup ||
+      customFieldOptionsNeedLookup;
+    const cachedContext = needsLookup
+      ? getCachedProjectContext(resolvedProjectId)
+      : null;
+    const cachedSuites = suiteNeedsLookup
+      ? flattenSuiteTree(cachedContext?.suites)
+      : null;
+    const cachedTags = tagsNeedLookup ? cachedContext?.tags ?? null : null;
+    const cachedRequirements = requirementsNeedLookup
+      ? cachedContext?.requirements ?? null
+      : null;
+    const cachedCustomFields =
+      customFieldsNeedLookup || customFieldOptionsNeedLookup
+        ? cachedContext?.custom_fields ?? null
+        : null;
+
+    if (
+      cachedSuites ||
+      cachedTags ||
+      cachedRequirements ||
+      cachedCustomFields
+    ) {
+      console.log(
+        `${logPrefix} Using cached project context for list_test_cases lookups (project ${resolvedProjectId})`
+      );
+    }
+
+    const [suitesListResponse, projectForCompany] = await Promise.all([
+      suiteNeedsLookup && !cachedSuites
         ? client.listSuites(resolvedProjectId)
         : Promise.resolve(null),
-      customFieldsNeedLookup
+      (customFieldsNeedLookup || customFieldOptionsNeedLookup) &&
+      !cachedCustomFields
         ? client.getProject(resolvedProjectId)
         : Promise.resolve(null),
     ]);
@@ -544,17 +715,24 @@ export async function handleListTestCases(
       ? getCompanyIdFromProject(projectForCompany)
       : undefined;
 
-    const [tagsList, requirementsList, customFieldsList] = await Promise.all([
-      tagsNeedLookup
-        ? client.listTags(resolvedProjectId)
-        : Promise.resolve(null),
-      requirementsNeedLookup
-        ? client.listRequirements(resolvedProjectId)
-        : Promise.resolve(null),
-      customFieldsNeedLookup
-        ? client.listProjectCustomFields(resolvedProjectId, companyId)
-        : Promise.resolve(null),
-    ]);
+    const [tagsListResponse, requirementsListResponse, customFieldsListResponse] =
+      await Promise.all([
+        tagsNeedLookup && !cachedTags
+          ? client.listTags(resolvedProjectId)
+          : Promise.resolve(null),
+        requirementsNeedLookup && !cachedRequirements
+          ? client.listRequirements(resolvedProjectId)
+          : Promise.resolve(null),
+        (customFieldsNeedLookup || customFieldOptionsNeedLookup) &&
+        !cachedCustomFields
+          ? client.listProjectCustomFields(resolvedProjectId, companyId)
+          : Promise.resolve(null),
+      ]);
+
+    const suitesList = cachedSuites ?? suitesListResponse;
+    const tagsList = cachedTags ?? tagsListResponse;
+    const requirementsList = cachedRequirements ?? requirementsListResponse;
+    const customFieldsList = cachedCustomFields ?? customFieldsListResponse;
 
     let resolvedSuiteId = toNumberId(suite_id);
     if (isNonNumericString(suite_id) && suitesList) {
@@ -812,6 +990,114 @@ export async function handleListTestCases(
                 error: {
                   code: "CUSTOM_FIELD_NOT_FOUND",
                   message: `Custom field(s) not found: ${missingCustomFields.join(", ")}`,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    }
+
+    if (customFieldOptionsNeedLookup && resolvedFilter && customFieldsList) {
+      const resolvedFilterRecord = resolvedFilter as Record<string, unknown>;
+      const missingCustomFieldOptions: string[] = [];
+      const ambiguousCustomFieldOptions: string[] = [];
+
+      Object.entries(resolvedFilterRecord)
+        .filter(([key]) => key.startsWith("cf_"))
+        .forEach(([key, value]) => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) {
+            return;
+          }
+          const filterType = (value as Record<string, unknown>)["filterType"];
+          const filterValue = (value as Record<string, unknown>)["filter"];
+          if (filterType !== "text" || typeof filterValue !== "string") {
+            return;
+          }
+          if (!isNonNumericString(filterValue)) {
+            return;
+          }
+          const fieldId = getCustomFieldIdFromKey(key);
+          if (!fieldId) {
+            return;
+          }
+          const field = customFieldsList.find(
+            (customField) => toNumberId(getField(customField, "id")) === fieldId
+          );
+          if (!field) {
+            return;
+          }
+          const fieldType =
+            getField<string>(field, "field_type") ??
+            getField<string>(field, "type");
+          if (!isDropdownFieldType(fieldType)) {
+            return;
+          }
+          const options = getCustomFieldOptions(field);
+          if (!options) {
+            return;
+          }
+          const lookups = buildOptionLookup(options);
+          if (!lookups.length) {
+            return;
+          }
+          const optionIds = new Set(lookups.map((lookup) => lookup.id));
+          if (optionIds.has(filterValue.trim())) {
+            return;
+          }
+          const match = resolveTextMatch(
+            (value as Record<string, unknown>)["type"]
+          );
+          if (!match) {
+            return;
+          }
+          const matches = lookups.filter((lookup) =>
+            matchTextValue(lookup.label, filterValue, match.match)
+          );
+          if (matches.length === 1) {
+            resolvedFilterRecord[key] = {
+              ...value,
+              filter: matches[0].id,
+            };
+            return;
+          }
+          const displayName = getCustomFieldDisplayName(field, key);
+          if (matches.length === 0) {
+            missingCustomFieldOptions.push(
+              `${displayName}=${filterValue}`
+            );
+            return;
+          }
+          ambiguousCustomFieldOptions.push(
+            `${displayName}=${filterValue}`
+          );
+        });
+
+      if (
+        missingCustomFieldOptions.length > 0 ||
+        ambiguousCustomFieldOptions.length > 0
+      ) {
+        const details: string[] = [];
+        if (missingCustomFieldOptions.length > 0) {
+          details.push(
+            `Missing: ${missingCustomFieldOptions.join(", ")}`
+          );
+        }
+        if (ambiguousCustomFieldOptions.length > 0) {
+          details.push(
+            `Ambiguous: ${ambiguousCustomFieldOptions.join(", ")} (use exact label)`
+          );
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: {
+                  code: "CUSTOM_FIELD_OPTION_NOT_FOUND",
+                  message: `Custom field option lookup failed. ${details.join(
+                    " "
+                  )}`,
                 },
               }),
             },

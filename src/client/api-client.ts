@@ -352,12 +352,12 @@ export class TestCollabApiClient {
     });
   }
 
-  async listTags(projectId: number, companyId?: number) {
+  async listTags(projectId: number) {
     const params = new URLSearchParams();
     params.set("project", String(projectId));
-    if (companyId !== undefined) {
-      params.set("company", String(companyId));
-    }
+    // if (companyId !== undefined) {
+    //   params.set("company", String(companyId));
+    // }
     params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",
@@ -365,12 +365,12 @@ export class TestCollabApiClient {
     );
   }
 
-  async listRequirements(projectId: number, companyId?: number) {
+  async listRequirements(projectId: number) {
     const params = new URLSearchParams();
     params.set("project", String(projectId));
-    if (companyId !== undefined) {
-      params.set("company", String(companyId));
-    }
+    // if (companyId !== undefined) {
+    //   params.set("company", String(companyId));
+    // }
     params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",

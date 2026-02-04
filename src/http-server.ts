@@ -23,6 +23,7 @@ import { registerTools } from "./tools/index.js";
 import { registerResources } from "./resources/index.js";
 import { randomUUID } from "node:crypto";
 import { parseContextFromHeaders, runWithContext, type RequestContext } from "./context.js";
+import "./env.js";
 
 const PORT = parseInt(process.env["MCP_PORT"] || "3100", 10);
 

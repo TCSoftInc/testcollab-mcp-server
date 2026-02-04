@@ -30,7 +30,7 @@ export function registerResources(server: McpServer): void {
     }),
     {
       description:
-        "Project context with suite tree, tags, and custom fields. Use this to resolve human-readable names (e.g. suite title) to numeric IDs.",
+        "Project context with suite tree, tags, requirements, and custom fields. Use this to resolve human-readable names (e.g. suite title) to numeric IDs.",
       mimeType: "application/json",
     },
     async (uri, variables) => {

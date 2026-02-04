@@ -393,10 +393,10 @@ export async function handleCreateTestCase(
 
     const [tagsList, requirementsList, customFieldsList] = await Promise.all([
       tagsNeedLookup
-        ? client.listTags(resolvedProjectId, companyId)
+        ? client.listTags(resolvedProjectId)
         : Promise.resolve(null),
       requirementsNeedLookup
-        ? client.listRequirements(resolvedProjectId, companyId)
+        ? client.listRequirements(resolvedProjectId)
         : Promise.resolve(null),
       customFieldsNeedLookup
         ? client.listProjectCustomFields(resolvedProjectId, companyId)
