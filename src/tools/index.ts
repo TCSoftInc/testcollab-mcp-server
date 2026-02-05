@@ -7,6 +7,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { handleListTestCases, handleCreateTestCase, handleUpdateTestCase } from "./test-cases/index.js";
+import { handleProjectContext, resolveProjectId } from "../resources/project-context.js";
 
 // ============================================================================
 // Zod Schemas for Tool Inputs
@@ -92,10 +93,53 @@ const testCaseFilterSchema = z
  * Register all tools with the MCP server
  */
 export function registerTools(server: McpServer): void {
-  // Register list_test_cases tool
+  // -------------------------------------------------------------------------
+  // get_project_context — should be called first in every conversation
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_project_context",
+    `Get project context including suite tree, tags, custom fields, and requirements.
+Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names) to numeric IDs used by other tools.
+
+IMPORTANT: Call this tool at the start of every conversation before using any other TestCollab tool.
+This avoids errors from unresolved suite names, tag names, or custom field references.`,
+    {
+      project_id: z.number().optional().describe("Project ID (optional — uses default project if omitted)"),
+    },
+    async (args) => {
+      const projectId = resolveProjectId(args.project_id);
+      if (!projectId) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "No project_id provided and no default project configured." }),
+            },
+          ],
+        };
+      }
+
+      const result = await handleProjectContext(projectId);
+      const text = result.contents[0]?.text ?? JSON.stringify({ error: "No context returned" });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text,
+          },
+        ],
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // list_test_cases
+  // -------------------------------------------------------------------------
   server.tool(
     "list_test_cases",
     `List test cases from a TestCollab project with optional filtering, sorting, and pagination.
+Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Filter fields include:
 - id, title, description, steps, priority (0=Low, 1=Normal, 2=High)
@@ -151,6 +195,7 @@ Example filter:
   server.tool(
     "create_test_case",
     `Create a new test case in TestCollab.
+Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Required: title
 Optional: project_id, suite (title), suite_id (id or title), description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
@@ -208,6 +253,7 @@ Example:
   server.tool(
     "update_test_case",
     `Update an existing test case in TestCollab. Only provided fields will be updated.
+Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Required: id (test case ID)
 
