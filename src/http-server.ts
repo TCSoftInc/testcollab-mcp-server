@@ -20,8 +20,10 @@ import { createServer as createHttpServer, IncomingMessage, ServerResponse } fro
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { registerTools } from "./tools/index.js";
+import { registerResources } from "./resources/index.js";
 import { randomUUID } from "node:crypto";
 import { parseContextFromHeaders, runWithContext, type RequestContext } from "./context.js";
+import "./env.js";
 
 const PORT = parseInt(process.env["MCP_PORT"] || "3100", 10);
 
@@ -41,8 +43,9 @@ function createMcpServer(): McpServer {
     version: "1.0.0",
   });
 
-  // Register all tools
+  // Register all tools and resources
   registerTools(server);
+  registerResources(server);
 
   return server;
 }

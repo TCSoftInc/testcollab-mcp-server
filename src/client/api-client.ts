@@ -197,6 +197,17 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Get a single project by ID (raw API call)
+   */
+  async getProject(projectId: number): Promise<Record<string, unknown>> {
+    const encodedProjectId = encodeURIComponent(String(projectId));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/projects/${encodedProjectId}`
+    );
+  }
+
+  /**
    * Create a new test case using raw API (supports custom fields)
    */
   async createTestCase(data: {
@@ -207,7 +218,7 @@ export class TestCollabApiClient {
     priority?: number;
     steps?: Array<{
       step: string;
-      expectedResult?: string;
+      expected_result?: string;
     }>;
     tags?: number[];
     requirements?: number[];
@@ -262,15 +273,16 @@ export class TestCollabApiClient {
     projectId: number,
     data: {
       title?: string;
-      description?: string;
+      description?: string | null;
       priority?: number;
-      suiteId?: number;
+      suiteId?: number | null;
       steps?: Array<{
         step: string;
         expectedResult?: string;
-      }>;
-      tags?: number[];
-      requirements?: number[];
+        reusableStepId?: number | null;
+      }> | null;
+      tags?: number[] | null;
+      requirements?: number[] | null;
       customFields?: Array<{
         id: number;
         name: string;
@@ -278,8 +290,8 @@ export class TestCollabApiClient {
         value: string | number | null;
         valueLabel?: string;
         color?: string;
-      }>;
-      attachments?: string[];
+      }> | null;
+      attachments?: string[] | null;
     }
   ): Promise<TestCase> {
     const payload: Record<string, unknown> = {
@@ -338,6 +350,47 @@ export class TestCollabApiClient {
     return this.suitesApi.getAllSuites({
       project: projectId,
     });
+  }
+
+  async listTags(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    // if (companyId !== undefined) {
+    //   params.set("company", String(companyId));
+    // }
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/tags?${params.toString()}`
+    );
+  }
+
+  async listRequirements(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    // if (companyId !== undefined) {
+    //   params.set("company", String(companyId));
+    // }
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/requirements?${params.toString()}`
+    );
+  }
+
+  async listProjectCustomFields(projectId: number, companyId?: number) {
+    const entity = encodeURIComponent("TestCase");
+    const params = new URLSearchParams();
+    params.set("projects", String(projectId));
+    if (companyId !== undefined) {
+      params.set("company", String(companyId));
+    }
+    params.set("entity", entity);
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/customfields?${params.toString()}`
+    );
   }
 }
 

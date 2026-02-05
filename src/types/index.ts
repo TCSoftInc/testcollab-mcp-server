@@ -61,7 +61,7 @@ export interface TestCaseFilter {
   under_review?: NumberFilter;
   is_automated?: NumberFilter;
   automation_status?: TextFilter;
-  last_run_status?: NumberFilter;
+  last_run_status?: TextFilter;
   run_count?: NumberFilter;
   avg_execution_time?: NumberFilter;
   failure_rate?: NumberFilter;
@@ -159,7 +159,7 @@ export interface TestCase {
   automation_info?: Record<string, unknown>;
   run_count?: number;
   last_run_on?: string;
-  last_run_status?: number;
+  last_run_status?: string;
   avg_execution_time?: number;
   failure_rate?: number;
   revision?: number;

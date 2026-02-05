@@ -2,6 +2,8 @@
  * Configuration for the TestCollab MCP Server
  */
 
+import "./env.js";
+
 export interface Config {
   /** Base URL for the TestCollab API */
   apiBaseUrl: string;

@@ -7,6 +7,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { handleListTestCases, handleCreateTestCase, handleUpdateTestCase } from "./test-cases/index.js";
+import { handleProjectContext, resolveProjectId } from "../resources/project-context.js";
 
 // ============================================================================
 // Zod Schemas for Tool Inputs
@@ -37,7 +38,11 @@ const numberFilterSchema = z.object({
     "lessThanOrEqual",
     "inRange",
   ]),
-  filter: z.union([z.number(), z.array(z.number())]),
+  filter: z.union([
+    z.number(),
+    z.string(),
+    z.array(z.union([z.number(), z.string()])),
+  ]),
   filterTo: z.number().optional(),
 });
 
@@ -73,7 +78,7 @@ const testCaseFilterSchema = z
     under_review: numberFilterSchema.optional(),
     is_automated: numberFilterSchema.optional(),
     automation_status: textFilterSchema.optional(),
-    last_run_status: numberFilterSchema.optional(),
+    last_run_status: textFilterSchema.optional(),
     run_count: numberFilterSchema.optional(),
     avg_execution_time: numberFilterSchema.optional(),
     failure_rate: numberFilterSchema.optional(),
@@ -88,16 +93,59 @@ const testCaseFilterSchema = z
  * Register all tools with the MCP server
  */
 export function registerTools(server: McpServer): void {
-  // Register list_test_cases tool
+  // -------------------------------------------------------------------------
+  // get_project_context — should be called first in every conversation
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_project_context",
+    `Get project context including suite tree, tags, custom fields, and requirements.
+Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names) to numeric IDs used by other tools.
+
+IMPORTANT: Call this tool at the start of every conversation before using any other TestCollab tool.
+This avoids errors from unresolved suite names, tag names, or custom field references.`,
+    {
+      project_id: z.number().optional().describe("Project ID (optional — uses default project if omitted)"),
+    },
+    async (args) => {
+      const projectId = resolveProjectId(args.project_id);
+      if (!projectId) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "No project_id provided and no default project configured." }),
+            },
+          ],
+        };
+      }
+
+      const result = await handleProjectContext(projectId);
+      const text = result.contents[0]?.text ?? JSON.stringify({ error: "No context returned" });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text,
+          },
+        ],
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // list_test_cases
+  // -------------------------------------------------------------------------
   server.tool(
     "list_test_cases",
     `List test cases from a TestCollab project with optional filtering, sorting, and pagination.
+Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Filter fields include:
 - id, title, description, steps, priority (0=Low, 1=Normal, 2=High)
-- suite, created_by, reviewer, poster (user IDs)
+- suite (ID or title), created_by, reviewer, poster (user IDs)
 - created_at, updated_at, last_run_on (dates)
-- tags, requirements (arrays of IDs)
+- tags, requirements (arrays of IDs or names)
 - under_review, is_automated (0 or 1)
 - run_count, avg_execution_time, failure_rate
 
@@ -113,7 +161,10 @@ Example filter:
 }`,
     {
       project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT env var is set)"),
-      suite_id: z.number().optional().describe("Filter by suite ID"),
+      suite_id: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Filter by suite ID or title"),
       filter: testCaseFilterSchema
         .optional()
         .describe("Filter conditions object"),
@@ -144,9 +195,10 @@ Example filter:
   server.tool(
     "create_test_case",
     `Create a new test case in TestCollab.
+Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Required: title
-Optional: project_id, suite_id, description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
+Optional: project_id, suite (title), suite_id (id or title), description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
 
 Steps format: [{ "step": "action", "expected_result": "result" }]
 
@@ -164,23 +216,30 @@ Example:
     {
       project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT is set)"),
       title: z.string().min(1).describe("Test case title (required)"),
-      suite_id: z.number().optional().describe("Suite ID to place the test case in"),
+      suite: z.string().optional().describe("Suite title (alias for suite_id)"),
+      suite_id: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Suite ID or suite title"),
       description: z.string().optional().describe("Test case description (HTML supported)"),
       priority: z.number().min(0).max(2).optional().describe("Priority: 0=Low, 1=Normal, 2=High"),
       steps: z.array(z.object({
         step: z.string().describe("Step action"),
         expected_result: z.string().optional().describe("Expected result"),
       })).optional().describe("Array of test steps"),
-      tags: z.array(z.number()).optional().describe("Array of tag IDs"),
-      requirements: z.array(z.number()).optional().describe("Array of requirement IDs"),
+      tags: z.array(z.union([z.number(), z.string()])).optional().describe("Array of tag IDs or names"),
+      requirements: z
+        .array(z.union([z.number(), z.string()]))
+        .optional()
+        .describe("Array of requirement IDs or names"),
       custom_fields: z.array(z.object({
-        id: z.number().describe("Custom field ID"),
+        id: z.union([z.number(), z.string()]).optional().describe("Custom field ID or name"),
         name: z.string().describe("Custom field system name"),
         label: z.string().optional().describe("Custom field display label"),
         value: z.union([z.string(), z.number(), z.null()]).describe("Custom field value"),
         valueLabel: z.string().optional().describe("Display label for value"),
         color: z.string().optional().describe("Color for value label"),
-      })).optional().describe("Array of custom field values"),
+      })).optional().describe("Array of custom field values (id optional if name provided)"),
       attachments: z.array(z.string()).optional().describe("Array of attachment file IDs"),
     },
     async (args) => {
@@ -194,6 +253,7 @@ Example:
   server.tool(
     "update_test_case",
     `Update an existing test case in TestCollab. Only provided fields will be updated.
+Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Required: id (test case ID)
 
@@ -217,23 +277,32 @@ Example:
       id: z.number().describe("Test case ID to update (required)"),
       project_id: z.number().optional().describe("Project ID (optional if default is set)"),
       title: z.string().min(1).optional().describe("New test case title"),
-      suite_id: z.number().optional().describe("Move to a different suite"),
+      suite_id: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Move to a different suite by ID or title"),
       description: z.string().optional().describe("New description (HTML supported)"),
       priority: z.number().min(0).max(2).optional().describe("New priority: 0=Low, 1=Normal, 2=High"),
       steps: z.array(z.object({
         step: z.string().describe("Step action"),
         expected_result: z.string().optional().describe("Expected result"),
       })).optional().describe("Replace all steps"),
-      tags: z.array(z.number()).optional().describe("Replace tags with these IDs"),
-      requirements: z.array(z.number()).optional().describe("Replace requirements with these IDs"),
+      tags: z
+        .array(z.union([z.number(), z.string()]))
+        .optional()
+        .describe("Replace tags with these IDs or names"),
+      requirements: z
+        .array(z.union([z.number(), z.string()]))
+        .optional()
+        .describe("Replace requirements with these IDs or names"),
       custom_fields: z.array(z.object({
-        id: z.number().describe("Custom field ID"),
+        id: z.union([z.number(), z.string()]).optional().describe("Custom field ID or name"),
         name: z.string().describe("Custom field system name"),
         label: z.string().optional().describe("Custom field display label"),
         value: z.union([z.string(), z.number(), z.null()]).describe("Custom field value"),
         valueLabel: z.string().optional().describe("Display label for value"),
         color: z.string().optional().describe("Color for value label"),
-      })).optional().describe("Update custom field values"),
+      })).optional().describe("Update custom field values (id optional if name provided)"),
       attachments: z.array(z.string()).optional().describe("Replace attachments with these file IDs"),
     },
     async (args) => {
