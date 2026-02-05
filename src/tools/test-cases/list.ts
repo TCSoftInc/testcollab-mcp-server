@@ -176,9 +176,11 @@ export const listTestCasesTool = {
   name: "list_test_cases",
   description: `List test cases from a TestCollab project with optional filtering, sorting, and pagination.
 
+Before calling this function, make sure project context is available.
+
 Filter fields include:
 - id, title, description, steps, priority (0=Low, 1=Normal, 2=High)
-- suite (ID or title), created_by, reviewer, poster (user IDs)
+- suite (ID), created_by, reviewer, poster (user IDs)
 - created_at, updated_at, last_run_on (dates)
 - tags, requirements (arrays of IDs or names)
 - under_review, is_automated (0 or 1)
