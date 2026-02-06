@@ -91,7 +91,7 @@ const testCaseFilterSchema = z
     description: textFilterSchema.optional(),
     steps: textFilterSchema.optional(),
     priority: numberFilterSchema.optional(),
-    //suite: lookupFilterSchema.optional(),
+    suite: lookupFilterSchema.optional(),
     created_by: numberFilterSchema.optional(),
     reviewer: numberFilterSchema.optional(),
     poster: numberFilterSchema.optional(),
@@ -146,7 +146,10 @@ export const listTestCasesSchema = z.preprocess(
   normalizeListTestCasesInput,
   z.object({
     project_id: z.number().optional().describe("Project ID (uses TC_DEFAULT_PROJECT env var if not specified)"),
-    suite_id: z.number().optional().describe("Filter by suite ID"),
+    suite_id: z
+      .union([z.number(), z.string()])
+      .optional()
+      .describe("Filter by suite ID or suite title"),
     filter: testCaseFilterSchema.optional().describe("Filter conditions object"),
     sort: z
       .array(sortModelSchema)
@@ -199,8 +202,9 @@ Filter types:
         description: "Project ID (optional if TC_DEFAULT_PROJECT env var is set)",
       },
       suite_id: {
-         type: "number",
-        description: "Filter by suite ID. If suite title is provided, map to ID from project context.",
+        oneOf: [{ type: "number" }, { type: "string" }],
+        description:
+          "Filter by suite ID or suite title. If suite title is provided, map to ID from project context.",
       },
       filter: {
         type: "object",

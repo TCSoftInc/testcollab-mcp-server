@@ -45,6 +45,11 @@ export const updateTestCaseSchema = z.object({
     .optional()
     .describe("Project ID (uses default if not specified)"),
   title: z.string().min(1).optional().describe("New test case title"),
+  suite: z
+    .union([z.number(), z.string()])
+    .nullable()
+    .optional()
+    .describe("Move to a different suite by ID or title (null to remove)"),
   suite_id: z
     .union([z.number(), z.string()])
     .nullable()
@@ -104,7 +109,8 @@ All other fields are optional - only provided fields will be updated.
 
 Fields:
 - title: New title
-- suite_id: Move to different suite (null to remove)
+- suite_id: Move to different suite by ID or title (null to remove)
+- suite: Move to different suite by ID or title (null to remove, alias for suite_id)
 - description: New description (HTML, null to clear)
 - priority: 0 (Low), 1 (Normal), 2 (High)
 - steps: Array replaces all existing steps (null to clear)
@@ -143,6 +149,10 @@ Example - update steps:
       title: {
         type: "string",
         description: "New test case title",
+      },
+      suite: {
+        oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+        description: "Move to a different suite by ID or title (null to remove)",
       },
       suite_id: {
         oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
@@ -258,6 +268,105 @@ const isNonNumericString = (value: unknown): value is string => {
   return trimmed.length > 0 && !numericIdPattern.test(trimmed);
 };
 
+const isDropdownFieldType = (value: unknown): boolean => {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "dropdown" || normalized === "multipleselect";
+};
+
+const getCustomFieldOptions = (field: unknown): unknown[] | null => {
+  const direct = getField<unknown[]>(field, "options");
+  if (Array.isArray(direct)) {
+    return direct;
+  }
+  const extra = getField<Record<string, unknown>>(field, "extra");
+  const extraOptions = getField<unknown[]>(extra, "options");
+  if (Array.isArray(extraOptions)) {
+    return extraOptions;
+  }
+  return null;
+};
+
+type OptionLookup = {
+  id: string;
+  label: string;
+};
+
+const buildOptionLookup = (options: unknown[]): OptionLookup[] => {
+  const lookups: OptionLookup[] = [];
+  options.forEach((option, index) => {
+    if (typeof option === "string") {
+      const label = option.trim();
+      if (!label) {
+        return;
+      }
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (typeof option === "number") {
+      const value = String(option);
+      lookups.push({ label: value, id: value });
+      return;
+    }
+    if (!option || typeof option !== "object") {
+      return;
+    }
+    const labelRaw =
+      getField<string>(option, "label") ?? getField<string>(option, "name");
+    const label = typeof labelRaw === "string" ? labelRaw.trim() : undefined;
+    const idRaw =
+      getField<string | number>(option, "id") ??
+      getField<string | number>(option, "value") ??
+      getField<string | number>(option, "systemValue");
+    const id =
+      idRaw !== undefined && idRaw !== null ? String(idRaw) : undefined;
+
+    if (label && id) {
+      lookups.push({ label, id });
+      return;
+    }
+    if (label && !id) {
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (!label && id) {
+      lookups.push({ label: id, id });
+    }
+  });
+  return lookups;
+};
+
+const resolveDropdownValue = (
+  fieldType: unknown,
+  options: unknown[] | null | undefined,
+  value: string | number | null,
+  valueLabel?: string
+): { value: string | number | null; valueLabel?: string } => {
+  if (!isDropdownFieldType(fieldType) || !options || options.length === 0) {
+    return { value, valueLabel };
+  }
+  const labelCandidate =
+    typeof valueLabel === "string" && valueLabel.trim().length > 0
+      ? valueLabel.trim()
+      : typeof value === "string" && isNonNumericString(value)
+        ? value.trim()
+        : undefined;
+  if (!labelCandidate) {
+    return { value, valueLabel };
+  }
+  const lookups = buildOptionLookup(options);
+  const match = lookups.find((lookup) => lookup.label === labelCandidate);
+  if (!match) {
+    return { value, valueLabel };
+  }
+  return {
+    value: match.id,
+    valueLabel: valueLabel ?? match.label,
+  };
+};
+
 const getField = <T>(item: unknown, key: string): T | undefined => {
   if (!item || typeof item !== "object") {
     return undefined;
@@ -337,6 +446,7 @@ export async function handleUpdateTestCase(
     id,
     project_id,
     title,
+    suite,
     suite_id,
     description,
     priority,
@@ -375,8 +485,11 @@ export async function handleUpdateTestCase(
   try {
     const client = getApiClient();
 
+    const suiteInput = hasField("suite_id") ? suite_id : suite;
     const suiteNeedsLookup =
-      hasField("suite_id") && suite_id !== null && isNonNumericString(suite_id);
+      (hasField("suite_id") || hasField("suite")) &&
+      suiteInput !== null &&
+      isNonNumericString(suiteInput);
     const tagsNeedLookup =
       hasField("tags") && Array.isArray(tags) && tags.some(isNonNumericString);
     const requirementsNeedLookup =
@@ -465,14 +578,15 @@ export async function handleUpdateTestCase(
       hasField("priority") && priority !== undefined
         ? priority
         : existing.priority;
-    let resolvedSuiteId: number | null | undefined = hasField("suite_id")
-      ? suite_id === null
-        ? null
-        : toNumberId(suite_id)
-      : existingSuiteId;
-    if (suiteNeedsLookup && suitesList && suite_id !== null) {
+    let resolvedSuiteId: number | null | undefined =
+      hasField("suite_id") || hasField("suite")
+        ? suiteInput === null
+          ? null
+          : toNumberId(suiteInput)
+        : existingSuiteId;
+    if (suiteNeedsLookup && suitesList && suiteInput !== null) {
       const match = suitesList.find(
-        (suite) => getField<string>(suite, "title") === suite_id
+        (suiteItem) => getField<string>(suiteItem, "title") === suiteInput
       );
       resolvedSuiteId = toNumberId(match ? getField(match, "id") : undefined);
       if (resolvedSuiteId === undefined) {
@@ -483,7 +597,7 @@ export async function handleUpdateTestCase(
               text: JSON.stringify({
                 error: {
                   code: "SUITE_NOT_FOUND",
-                  message: `Suite not found with title "${suite_id}" in that project`,
+                  message: `Suite not found with title "${suiteInput}" in that project`,
                 },
               }),
             },
@@ -491,7 +605,11 @@ export async function handleUpdateTestCase(
         };
       }
     }
-    if (hasField("suite_id") && suite_id !== null && resolvedSuiteId === undefined) {
+    if (
+      (hasField("suite_id") || hasField("suite")) &&
+      suiteInput !== null &&
+      resolvedSuiteId === undefined
+    ) {
       return {
         content: [
           {
@@ -499,7 +617,7 @@ export async function handleUpdateTestCase(
             text: JSON.stringify({
               error: {
                 code: "INVALID_SUITE_ID",
-                message: "suite_id must be a numeric ID or suite title",
+                message: "suite_id/suite must be a numeric ID or suite title",
               },
             }),
           },
@@ -567,13 +685,18 @@ export async function handleUpdateTestCase(
           if (!name || id === undefined) {
             return map;
           }
+          const fieldType =
+            getField<string>(cf, "field_type") ?? getField<string>(cf, "type");
+          const options = getCustomFieldOptions(cf);
           map.set(name, {
             id,
             name,
             label: getField<string>(cf, "label"),
+            fieldType,
+            options,
           });
           return map;
-        }, new Map<string, { id: number; name: string; label?: string }>())
+        }, new Map<string, { id: number; name: string; label?: string; fieldType?: string; options?: unknown[] | null }>())
       : null;
 
     const resolvedCustomFields = hasField("custom_fields")
@@ -599,12 +722,21 @@ export async function handleUpdateTestCase(
               if (!match) {
                 return undefined;
               }
+              const { value: resolvedValue, valueLabel: resolvedValueLabel } =
+                resolveDropdownValue(
+                  match.fieldType,
+                  match.options,
+                  cf.value,
+                  cf.valueLabel
+                );
               return {
                 id: match.id,
                 name: match.name,
-                value: cf.value,
+                value: resolvedValue,
                 ...(cf.label !== undefined ? { label: cf.label } : {}),
-                ...(cf.valueLabel !== undefined ? { valueLabel: cf.valueLabel } : {}),
+                ...(resolvedValueLabel !== undefined
+                  ? { valueLabel: resolvedValueLabel }
+                  : {}),
                 ...(cf.color !== undefined ? { color: cf.color } : {}),
                 ...(cf.label === undefined && match.label !== undefined
                   ? { label: match.label }
