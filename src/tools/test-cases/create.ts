@@ -44,9 +44,8 @@ export const createTestCaseSchema = z.object({
     .optional()
     .describe("Project ID (uses TC_DEFAULT_PROJECT env var if not specified)"),
   title: z.string().min(1).describe("Test case title (required)"),
-  suite: z.string().optional().describe("Suite title (alias for suite_id)"),
-  suite_id: z
-    .union([z.number(), z.string()])
+  suite: z
+    .union([z.string(), z.number()])
     .optional()
     .describe("Suite ID or suite title"),
   description: z.string().optional().describe("Test case description (HTML supported)"),
@@ -93,8 +92,7 @@ Required fields:
 
 Optional fields:
 - project_id: Project ID (uses TC_DEFAULT_PROJECT if not specified)
-- suite_id: Suite ID or suite title
-- suite: Suite title (alias for suite_id)
+- suite: Suite ID or suite title
 - description: HTML-formatted description
 - priority: 0 (Low), 1 (Normal), 2 (High) - default is 1
 - steps: Array of { step: "action", expected_result: "result" }
@@ -115,7 +113,7 @@ Custom field format:
 Example:
 {
   "title": "Verify login with valid credentials",
-  "suite_id": 123,
+  "suite": 123,
   "priority": 2,
   "description": "<p>Test user login functionality</p>",
   "steps": [
@@ -141,10 +139,6 @@ Example:
         description: "Test case title (required)",
       },
       suite: {
-        type: "string",
-        description: "Suite title (alias for suite_id)",
-      },
-      suite_id: {
         oneOf: [{ type: "number" }, { type: "string" }],
         description: "Suite ID or suite title",
       },
@@ -250,6 +244,14 @@ const isNonNumericString = (value: unknown): value is string => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 && !numericIdPattern.test(trimmed);
+};
+
+const normalizeString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 };
 
 const isDropdownFieldType = (value: unknown): boolean => {
@@ -430,7 +432,6 @@ export async function handleCreateTestCase(
     project_id,
     title,
     suite,
-    suite_id,
     description,
     priority,
     steps,
@@ -465,8 +466,10 @@ export async function handleCreateTestCase(
   try {
     const client = getApiClient();
 
-    const suiteInput = suite_id ?? suite;
-    const suiteNeedsLookup = isNonNumericString(suiteInput);
+    const suiteInput = suite;
+    const suiteNumericId = toNumberId(suiteInput);
+    const suiteTitle = normalizeString(suiteInput);
+    const suiteNeedsLookup = suiteNumericId === undefined && suiteTitle !== undefined;
     const tagsNeedLookup = tags?.some(isNonNumericString) ?? false;
     const requirementsNeedLookup =
       requirements?.some(isNonNumericString) ?? false;
@@ -502,11 +505,17 @@ export async function handleCreateTestCase(
         : Promise.resolve(null),
     ]);
 
-    let resolvedSuiteId = toNumberId(suiteInput);
+    let resolvedSuiteId = suiteNumericId;
     if (suiteNeedsLookup && suitesList) {
-      const match = suitesList.find(
-        (suite) => getField<string>(suite, "title") === suiteInput
-      );
+      const normalizedSuiteTitle = suiteTitle?.toLowerCase();
+      const match = suitesList.find((suite) => {
+        const title = normalizeString(getField<string>(suite, "title"));
+        return (
+          title !== undefined &&
+          normalizedSuiteTitle !== undefined &&
+          title.toLowerCase() === normalizedSuiteTitle
+        );
+      });
       resolvedSuiteId = toNumberId(match ? getField(match, "id") : undefined);
       if (resolvedSuiteId === undefined) {
         return {
@@ -516,7 +525,7 @@ export async function handleCreateTestCase(
               text: JSON.stringify({
                 error: {
                   code: "SUITE_NOT_FOUND",
-                  message: `Suite not found with title "${suiteInput}" in that project`,
+                  message: `Suite not found with title "${suiteTitle}" in that project`,
                 },
               }),
             },

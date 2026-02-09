@@ -146,7 +146,7 @@ export const listTestCasesSchema = z.preprocess(
   normalizeListTestCasesInput,
   z.object({
     project_id: z.number().optional().describe("Project ID (uses TC_DEFAULT_PROJECT env var if not specified)"),
-    suite_id: z
+    suite: z
       .union([z.number(), z.string()])
       .optional()
       .describe("Filter by suite ID or suite title"),
@@ -180,6 +180,7 @@ export const listTestCasesTool = {
   description: `List test cases from a TestCollab project with optional filtering, sorting, and pagination.
 
 Before calling this function, make sure project context is available.
+Note: list_test_cases may omit full step details; use get_test_case for a complete test case with steps.
 
 Filter fields include:
 - id, title, description, steps, priority (0=Low, 1=Normal, 2=High)
@@ -201,7 +202,7 @@ Filter types:
         type: "number",
         description: "Project ID (optional if TC_DEFAULT_PROJECT env var is set)",
       },
-      suite_id: {
+      suite: {
         oneOf: [{ type: "number" }, { type: "string" }],
         description:
           "Filter by suite ID or suite title. If suite title is provided, map to ID from project context.",
@@ -606,7 +607,7 @@ export async function handleListTestCases(
     };
   }
 
-  const { project_id, suite_id, filter, sort, limit, offset } = parsed.data;
+  const { project_id, suite, filter, sort, limit, offset } = parsed.data;
 
   // Resolve project ID: use provided value or fall back to default
   // Check request context first (HTTP transport), then env config (stdio transport)
@@ -634,7 +635,7 @@ export async function handleListTestCases(
     const client = getApiClient();
 
     const suiteNeedsLookup =
-      isNonNumericString(suite_id) ||
+      isNonNumericString(suite) ||
       (filter?.suite !== undefined &&
         (Array.isArray(filter.suite?.filter)
           ? filter.suite.filter.some(isNonNumericString)
@@ -740,10 +741,10 @@ export async function handleListTestCases(
     const requirementsList = cachedRequirements ?? requirementsListResponse;
     const customFieldsList = cachedCustomFields ?? customFieldsListResponse;
 
-    let resolvedSuiteId = toNumberId(suite_id);
-    if (isNonNumericString(suite_id) && suitesList) {
+    let resolvedSuiteId = toNumberId(suite);
+    if (isNonNumericString(suite) && suitesList) {
       const match = suitesList.find(
-        (suite) => getField<string>(suite, "title") === suite_id
+        (suiteItem) => getField<string>(suiteItem, "title") === suite
       );
       resolvedSuiteId = toNumberId(match ? getField(match, "id") : undefined);
       if (resolvedSuiteId === undefined) {
@@ -754,7 +755,7 @@ export async function handleListTestCases(
               text: JSON.stringify({
                 error: {
                   code: "SUITE_NOT_FOUND",
-                  message: `Suite not found with title "${suite_id}" in that project`,
+                  message: `Suite not found with title "${suite}" in that project`,
                 },
               }),
             },

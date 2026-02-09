@@ -6,7 +6,14 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { handleListTestCases, handleCreateTestCase, handleUpdateTestCase } from "./test-cases/index.js";
+import {
+  handleListTestCases,
+  handleCreateTestCase,
+  handleUpdateTestCase,
+  getTestCaseTool,
+  getTestCaseSchema,
+  handleGetTestCase,
+} from "./test-cases/index.js";
 import { handleProjectContext, resolveProjectId } from "../resources/project-context.js";
 
 // ============================================================================
@@ -140,6 +147,7 @@ This avoids errors from unresolved suite names, tag names, or custom field refer
     "list_test_cases",
     `List test cases from a TestCollab project with optional filtering, sorting, and pagination.
 Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
+Note: list_test_cases may omit full step details; use get_test_case for a complete test case with steps.
 
 Filter fields include:
 - id, title, description, steps, priority (0=Low, 1=Normal, 2=High)
@@ -161,7 +169,7 @@ Example filter:
 }`,
     {
       project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT env var is set)"),
-      suite_id: z
+      suite: z
         .union([z.number(), z.string()])
         .optional()
         .describe("Filter by suite ID or title"),
@@ -198,7 +206,7 @@ Example filter:
 Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
 
 Required: title
-Optional: project_id, suite (title), suite_id (id or title), description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
+Optional: project_id, suite (ID or title), description, priority (0=Low, 1=Normal, 2=High), steps, tags, requirements, custom_fields, attachments
 
 Steps format: [{ "step": "action", "expected_result": "result" }]
 
@@ -216,8 +224,7 @@ Example:
     {
       project_id: z.number().optional().describe("Project ID (optional if TC_DEFAULT_PROJECT is set)"),
       title: z.string().min(1).describe("Test case title (required)"),
-      suite: z.string().optional().describe("Suite title (alias for suite_id)"),
-      suite_id: z
+      suite: z
         .union([z.number(), z.string()])
         .optional()
         .describe("Suite ID or suite title"),
@@ -254,15 +261,17 @@ Example:
     "update_test_case",
     `Update an existing test case in TestCollab. Only provided fields will be updated.
 Tip: Call get_project_context first to resolve suite/tag/custom field names to IDs.
+Tip: If you need existing steps (e.g., to fill missing expected results), call get_test_case first and then use steps_patch.
 
 Required: id (test case ID)
 
 Optional fields:
 - title: New title
-- suite_id: Move to different suite
+- suite: Move to different suite
 - description: New description (HTML)
 - priority: 0 (Low), 1 (Normal), 2 (High)
 - steps: Replaces all existing steps
+- steps_patch: Patch steps by step number (1-based) without replacing all steps
 - tags: Replaces all existing tags
 - requirements: Replaces all existing requirements
 - custom_fields: Update specific custom fields
@@ -272,21 +281,34 @@ Example:
   "id": 1712,
   "title": "Updated login test",
   "priority": 2
+}
+
+Example - patch a single step:
+{
+  "id": 1714,
+  "steps_patch": [
+    { "step_number": 1, "expected_result": "Appropriate expected result" }
+  ]
 }`,
     {
       id: z.number().describe("Test case ID to update (required)"),
       project_id: z.number().optional().describe("Project ID (optional if default is set)"),
       title: z.string().min(1).optional().describe("New test case title"),
-      suite_id: z
-        .union([z.number(), z.string()])
+      suite: z
+        .union([z.number(), z.string(), z.null()])
         .optional()
-        .describe("Move to a different suite by ID or title"),
+        .describe("Move to a different suite by ID or title (null to remove)"),
       description: z.string().optional().describe("New description (HTML supported)"),
       priority: z.number().min(0).max(2).optional().describe("New priority: 0=Low, 1=Normal, 2=High"),
       steps: z.array(z.object({
         step: z.string().describe("Step action"),
         expected_result: z.string().optional().describe("Expected result"),
       })).optional().describe("Replace all steps"),
+      steps_patch: z.array(z.object({
+        step_number: z.number().min(1).describe("1-based step number to update"),
+        step: z.string().optional().describe("Updated step description"),
+        expected_result: z.string().optional().describe("Updated expected result"),
+      })).optional().describe("Patch steps by step number (1-based) without replacing all steps"),
       tags: z
         .array(z.union([z.number(), z.string()]))
         .optional()
@@ -310,8 +332,19 @@ Example:
     }
   );
 
+  // -------------------------------------------------------------------------
+  // get_test_case
+  // -------------------------------------------------------------------------
+  server.tool(
+    getTestCaseTool.name,
+    getTestCaseTool.description,
+    getTestCaseSchema.shape,
+    async (args) => {
+      return handleGetTestCase(args);
+    }
+  );
+
   // Future tools will be registered here:
-  // server.tool("get_test_case", ...);
   // server.tool("delete_test_case", ...);
   // server.tool("list_suites", ...);
 }

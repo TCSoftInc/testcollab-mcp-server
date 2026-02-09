@@ -197,6 +197,26 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Get a single test case by ID using raw API (preserves full payload)
+   */
+  async getTestCaseRaw(
+    id: number,
+    projectId: number,
+    options?: { parseRs?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    if (options?.parseRs) {
+      params.set("parse_rs", "1");
+    }
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/testcases/${encodedId}?${params.toString()}`
+    );
+  }
+
+  /**
    * Get a single project by ID (raw API call)
    */
   async getProject(projectId: number): Promise<Record<string, unknown>> {
