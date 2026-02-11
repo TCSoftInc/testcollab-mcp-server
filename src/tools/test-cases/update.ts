@@ -21,6 +21,19 @@ const stepSchema = z.object({
     .describe("Expected result for this step"),
 });
 
+const stepPatchSchema = z.object({
+  step_number: z
+    .number()
+    .int()
+    .min(1)
+    .describe("1-based step number to update"),
+  step: z.string().optional().describe("Updated step description"),
+  expected_result: z
+    .string()
+    .optional()
+    .describe("Updated expected result for this step"),
+});
+
 const customFieldSchema = z.object({
   id: z
     .union([z.number(), z.string()])
@@ -45,7 +58,7 @@ export const updateTestCaseSchema = z.object({
     .optional()
     .describe("Project ID (uses default if not specified)"),
   title: z.string().min(1).optional().describe("New test case title"),
-  suite_id: z
+  suite: z
     .union([z.number(), z.string()])
     .nullable()
     .optional()
@@ -66,6 +79,12 @@ export const updateTestCaseSchema = z.object({
     .nullable()
     .optional()
     .describe("Replace all steps with this array (null to clear)"),
+  steps_patch: z
+    .array(stepPatchSchema)
+    .optional()
+    .describe(
+      "Patch existing steps by step number (1-based) without replacing the entire steps array"
+    ),
   tags: z
     .array(z.union([z.number(), z.string()]))
     .nullable()
@@ -102,12 +121,16 @@ Required: id (test case ID)
 
 All other fields are optional - only provided fields will be updated.
 
+Tip: If you need to inspect existing steps (e.g., to fill missing expected results),
+call get_test_case first and then use steps_patch.
+
 Fields:
 - title: New title
-- suite_id: Move to different suite (null to remove)
+- suite: Move to different suite by ID or title (null to remove)
 - description: New description (HTML, null to clear)
 - priority: 0 (Low), 1 (Normal), 2 (High)
 - steps: Array replaces all existing steps (null to clear)
+- steps_patch: Patch steps by step number (1-based) without replacing all steps
 - tags: Array replaces all existing tags (null to clear)
 - requirements: Array replaces all existing requirements (null to clear)
 - custom_fields: Update specific custom fields (null to clear)
@@ -127,6 +150,14 @@ Example - update steps:
     { "step": "Go to login", "expected_result": "Page loads" },
     { "step": "Enter credentials", "expected_result": "Login succeeds" }
   ]
+}
+
+Example - patch a single step:
+{
+  "id": 1714,
+  "steps_patch": [
+    { "step_number": 1, "expected_result": "Appropriate expected result" }
+  ]
 }`,
 
   inputSchema: {
@@ -144,7 +175,7 @@ Example - update steps:
         type: "string",
         description: "New test case title",
       },
-      suite_id: {
+      suite: {
         oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
         description: "Move to a different suite by ID or title (null to remove)",
       },
@@ -173,6 +204,20 @@ Example - update steps:
           },
           { type: "null" },
         ],
+      },
+      steps_patch: {
+        type: "array",
+        description:
+          "Patch existing steps by step number (1-based) without replacing all steps",
+        items: {
+          type: "object",
+          properties: {
+            step_number: { type: "number", minimum: 1 },
+            step: { type: "string" },
+            expected_result: { type: "string" },
+          },
+          required: ["step_number"],
+        },
       },
       tags: {
         oneOf: [
@@ -258,6 +303,113 @@ const isNonNumericString = (value: unknown): value is string => {
   return trimmed.length > 0 && !numericIdPattern.test(trimmed);
 };
 
+const normalizeString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const isDropdownFieldType = (value: unknown): boolean => {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "dropdown" || normalized === "multipleselect";
+};
+
+const getCustomFieldOptions = (field: unknown): unknown[] | null => {
+  const direct = getField<unknown[]>(field, "options");
+  if (Array.isArray(direct)) {
+    return direct;
+  }
+  const extra = getField<Record<string, unknown>>(field, "extra");
+  const extraOptions = getField<unknown[]>(extra, "options");
+  if (Array.isArray(extraOptions)) {
+    return extraOptions;
+  }
+  return null;
+};
+
+type OptionLookup = {
+  id: string;
+  label: string;
+};
+
+const buildOptionLookup = (options: unknown[]): OptionLookup[] => {
+  const lookups: OptionLookup[] = [];
+  options.forEach((option, index) => {
+    if (typeof option === "string") {
+      const label = option.trim();
+      if (!label) {
+        return;
+      }
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (typeof option === "number") {
+      const value = String(option);
+      lookups.push({ label: value, id: value });
+      return;
+    }
+    if (!option || typeof option !== "object") {
+      return;
+    }
+    const labelRaw =
+      getField<string>(option, "label") ?? getField<string>(option, "name");
+    const label = typeof labelRaw === "string" ? labelRaw.trim() : undefined;
+    const idRaw =
+      getField<string | number>(option, "id") ??
+      getField<string | number>(option, "value") ??
+      getField<string | number>(option, "systemValue");
+    const id =
+      idRaw !== undefined && idRaw !== null ? String(idRaw) : undefined;
+
+    if (label && id) {
+      lookups.push({ label, id });
+      return;
+    }
+    if (label && !id) {
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (!label && id) {
+      lookups.push({ label: id, id });
+    }
+  });
+  return lookups;
+};
+
+const resolveDropdownValue = (
+  fieldType: unknown,
+  options: unknown[] | null | undefined,
+  value: string | number | null,
+  valueLabel?: string
+): { value: string | number | null; valueLabel?: string } => {
+  if (!isDropdownFieldType(fieldType) || !options || options.length === 0) {
+    return { value, valueLabel };
+  }
+  const labelCandidate =
+    typeof valueLabel === "string" && valueLabel.trim().length > 0
+      ? valueLabel.trim()
+      : typeof value === "string" && isNonNumericString(value)
+        ? value.trim()
+        : undefined;
+  if (!labelCandidate) {
+    return { value, valueLabel };
+  }
+  const lookups = buildOptionLookup(options);
+  const match = lookups.find((lookup) => lookup.label === labelCandidate);
+  if (!match) {
+    return { value, valueLabel };
+  }
+  return {
+    value: match.id,
+    valueLabel: valueLabel ?? match.label,
+  };
+};
+
 const getField = <T>(item: unknown, key: string): T | undefined => {
   if (!item || typeof item !== "object") {
     return undefined;
@@ -270,7 +422,45 @@ const getField = <T>(item: unknown, key: string): T | undefined => {
   if (attributes && typeof attributes === "object") {
     return (attributes as Record<string, unknown>)[key] as T | undefined;
   }
+  const relations = record["relations"];
+  if (relations && typeof relations === "object") {
+    return (relations as Record<string, unknown>)[key] as T | undefined;
+  }
   return undefined;
+};
+
+const getStepText = (step: unknown): string | undefined => {
+  if (typeof step === "string") {
+    return normalizeString(step);
+  }
+  const raw =
+    getField<string>(step, "step") ??
+    getField<string>(step, "action") ??
+    getField<string>(step, "description");
+  return normalizeString(raw);
+};
+
+const getStepExpectedResult = (step: unknown): string | undefined => {
+  const raw =
+    getField<string>(step, "expectedResult") ??
+    getField<string>(step, "expected_result") ??
+    getField<string>(step, "expected");
+  return normalizeString(raw);
+};
+
+const getStepReusableId = (step: unknown): number | null | undefined => {
+  const raw =
+    getField<unknown>(step, "reusableStepId") ??
+    getField<unknown>(step, "reusable_step_id") ??
+    getField<unknown>(step, "parsedReusableStepId") ??
+    getField<unknown>(step, "parsed_reusable_step_id");
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === null) {
+    return null;
+  }
+  return toNumberId(raw) ?? null;
 };
 
 const unwrapApiData = (value: unknown): unknown => {
@@ -280,6 +470,65 @@ const unwrapApiData = (value: unknown): unknown => {
   const record = value as Record<string, unknown>;
   const data = record["data"];
   return data && typeof data === "object" ? data : value;
+};
+
+const unwrapApiEntity = (value: unknown): Record<string, unknown> | null => {
+  const unwrapped = unwrapApiData(value);
+  if (!unwrapped || typeof unwrapped !== "object") {
+    return null;
+  }
+  const record = unwrapped as Record<string, unknown>;
+  const attributes = record["attributes"];
+  if (attributes && typeof attributes === "object") {
+    return { ...(attributes as Record<string, unknown>), ...record };
+  }
+  return record;
+};
+
+const unwrapCollection = (value: unknown): unknown[] | undefined => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const data = record["data"];
+  return Array.isArray(data) ? data : undefined;
+};
+
+const getArrayField = (
+  container: Record<string, unknown>,
+  key: string,
+  altKeys?: string[]
+): unknown[] | undefined => {
+  const direct = unwrapCollection(getField<unknown>(container, key));
+  if (direct) {
+    return direct;
+  }
+  if (altKeys) {
+    for (const altKey of altKeys) {
+      const altValue = unwrapCollection(getField<unknown>(container, altKey));
+      if (altValue) {
+        return altValue;
+      }
+    }
+  }
+  return undefined;
+};
+
+const getExistingStepsSource = (
+  testCase: Record<string, unknown>
+): unknown[] | undefined => {
+  const direct = getArrayField(testCase, "steps");
+  const parsed = getArrayField(testCase, "stepsParsed", ["steps_parsed"]);
+  if (direct && direct.length > 0) {
+    return direct;
+  }
+  if (parsed && parsed.length > 0) {
+    return parsed;
+  }
+  return direct ?? parsed;
 };
 
 const extractId = (value: unknown): number | undefined => {
@@ -337,10 +586,11 @@ export async function handleUpdateTestCase(
     id,
     project_id,
     title,
-    suite_id,
+    suite,
     description,
     priority,
     steps,
+    steps_patch,
     tags,
     requirements,
     custom_fields,
@@ -349,6 +599,24 @@ export async function handleUpdateTestCase(
   const rawArgs = (args && typeof args === "object") ? (args as Record<string, unknown>) : {};
   const hasField = (key: string) =>
     Object.prototype.hasOwnProperty.call(rawArgs, key);
+  const hasSteps = hasField("steps");
+  const hasStepsPatch = hasField("steps_patch");
+
+  if (hasSteps && hasStepsPatch) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: {
+              code: "INVALID_INPUT",
+              message: "Provide either steps or steps_patch, not both.",
+            },
+          }),
+        },
+      ],
+    };
+  }
 
   // Resolve project ID
   const requestContext = getRequestContext();
@@ -375,8 +643,14 @@ export async function handleUpdateTestCase(
   try {
     const client = getApiClient();
 
+    const suiteInput = suite;
+    const suiteNumericId = toNumberId(suiteInput);
+    const suiteTitle = normalizeString(suiteInput);
     const suiteNeedsLookup =
-      hasField("suite_id") && suite_id !== null && isNonNumericString(suite_id);
+      hasField("suite") &&
+      suiteInput !== null &&
+      suiteNumericId === undefined &&
+      suiteTitle !== undefined;
     const tagsNeedLookup =
       hasField("tags") && Array.isArray(tags) && tags.some(isNonNumericString);
     const requirementsNeedLookup =
@@ -418,62 +692,123 @@ export async function handleUpdateTestCase(
 
     // The PUT /testcases/{id} endpoint expects a full TestCasePayload.
     // Fetch current test case and merge with incoming changes to avoid partial payload errors.
-    const existing = await client.getTestCase(id, resolvedProjectId);
-
-    const existingSuiteId =
-      typeof existing.suite === "number" ? existing.suite : existing.suite?.id;
-
-    const existingSteps = existing.steps?.map((s) => {
-      const expectedResult =
-        "expectedResult" in s
-          ? s.expectedResult
-          : (s as { expected_result?: string }).expected_result;
-      const reusableStepId =
-        "reusableStepId" in s
-          ? s.reusableStepId ?? null
-          : (s as { reusable_step_id?: number | null }).reusable_step_id ?? null;
-
-      return {
-        step: s.step,
-        expectedResult,
-        reusableStepId,
-      };
+    const existingRaw = await client.getTestCaseRaw(id, resolvedProjectId, {
+      parseRs: hasSteps || hasStepsPatch,
     });
+    const existing = unwrapApiEntity(existingRaw);
+    if (!existing) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: {
+                code: "INVALID_TEST_CASE",
+                message: `Unable to load test case ${id} for update.`,
+              },
+            }),
+          },
+        ],
+      };
+    }
 
-    const existingTags = existing.tags
-      ?.map((t) => t.id)
-      .filter((id): id is number => typeof id === "number");
-    const existingRequirements = existing.requirements
-      ?.map((r) => r.id)
-      .filter((id): id is number => typeof id === "number");
-    const existingAttachments = existing.attachments?.map((a) => String(a.id));
-    const existingCustomFields = existing.customFields?.map((cf) => ({
-      id: cf.id,
-      name: cf.name,
-      label: cf.label,
-      value: cf.value,
-      valueLabel: cf.valueLabel,
-      color: cf.color,
+    const existingSuiteValue = getField<unknown>(existing, "suite");
+    const existingSuiteId =
+      typeof existingSuiteValue === "number"
+        ? existingSuiteValue
+        : extractId(existingSuiteValue);
+
+    type ExistingStep = {
+      step: string;
+      expectedResult?: string;
+      reusableStepId?: number | null;
+    };
+
+    const stepsSource = getExistingStepsSource(existing);
+    const existingSteps: ExistingStep[] | undefined = stepsSource?.map((s) => ({
+      step: getStepText(s) ?? "",
+      expectedResult: getStepExpectedResult(s),
+      reusableStepId: getStepReusableId(s) ?? null,
     }));
 
+    const existingTags = getArrayField(existing, "tags")
+      ?.map((t) => extractId(t))
+      .filter((id): id is number => typeof id === "number");
+    const existingRequirements = getArrayField(existing, "requirements")
+      ?.map((r) => extractId(r))
+      .filter((id): id is number => typeof id === "number");
+    const existingAttachments = getArrayField(existing, "attachments")
+      ?.map((a) => {
+        const attachmentId = extractId(a);
+        return attachmentId !== undefined ? String(attachmentId) : undefined;
+      })
+      .filter((id): id is string => typeof id === "string");
+    const existingCustomFields = getArrayField(existing, "customFields", [
+      "custom_fields",
+    ])
+      ?.map((cf) => {
+        const cfId = extractId(cf);
+        const name = normalizeString(getField<string>(cf, "name")) ?? "";
+        if (cfId === undefined || name.length === 0) {
+          return undefined;
+        }
+        return {
+          id: cfId,
+          name,
+          label: getField<string>(cf, "label"),
+          value:
+            (getField<string | number | null>(cf, "value") ?? null),
+          valueLabel:
+            getField<string>(cf, "valueLabel") ??
+            getField<string>(cf, "value_label"),
+          color: getField<string>(cf, "color"),
+        };
+      })
+      .filter(
+        (
+          cf
+        ): cf is {
+          id: number;
+          name: string;
+          label: string | undefined;
+          value: string | number | null;
+          valueLabel: string | undefined;
+          color: string | undefined;
+        } => cf !== undefined
+      );
+
+    const existingTitle = getField<string>(existing, "title");
+    const existingDescription = getField<string | null>(
+      existing,
+      "description"
+    );
+    const existingPriority = toNumberId(getField<unknown>(existing, "priority"));
+
     const resolvedTitle =
-      hasField("title") && title !== undefined ? title : existing.title;
+      hasField("title") && title !== undefined ? title : existingTitle;
     const resolvedDescription = hasField("description")
       ? description
-      : existing.description;
+      : existingDescription;
     const resolvedPriority =
       hasField("priority") && priority !== undefined
         ? priority
-        : existing.priority;
-    let resolvedSuiteId: number | null | undefined = hasField("suite_id")
-      ? suite_id === null
-        ? null
-        : toNumberId(suite_id)
-      : existingSuiteId;
-    if (suiteNeedsLookup && suitesList && suite_id !== null) {
-      const match = suitesList.find(
-        (suite) => getField<string>(suite, "title") === suite_id
-      );
+        : existingPriority;
+    let resolvedSuiteId: number | null | undefined =
+      hasField("suite")
+        ? suiteInput === null
+          ? null
+          : suiteNumericId
+        : existingSuiteId;
+    if (suiteNeedsLookup && suitesList && suiteInput !== null) {
+      const normalizedSuiteTitle = suiteTitle?.toLowerCase();
+      const match = suitesList.find((suiteItem) => {
+        const title = normalizeString(getField<string>(suiteItem, "title"));
+        return (
+          title !== undefined &&
+          normalizedSuiteTitle !== undefined &&
+          title.toLowerCase() === normalizedSuiteTitle
+        );
+      });
       resolvedSuiteId = toNumberId(match ? getField(match, "id") : undefined);
       if (resolvedSuiteId === undefined) {
         return {
@@ -483,7 +818,7 @@ export async function handleUpdateTestCase(
               text: JSON.stringify({
                 error: {
                   code: "SUITE_NOT_FOUND",
-                  message: `Suite not found with title "${suite_id}" in that project`,
+                  message: `Suite not found with title "${suiteTitle}" in that project`,
                 },
               }),
             },
@@ -491,33 +826,112 @@ export async function handleUpdateTestCase(
         };
       }
     }
-    if (hasField("suite_id") && suite_id !== null && resolvedSuiteId === undefined) {
+    if (
+      hasField("suite") &&
+      suiteInput !== null &&
+      resolvedSuiteId === undefined
+    ) {
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              error: {
-                code: "INVALID_SUITE_ID",
-                message: "suite_id must be a numeric ID or suite title",
-              },
-            }),
-          },
-        ],
-      };
+            error: {
+              code: "INVALID_SUITE_ID",
+              message: "suite must be a numeric ID or suite title",
+            },
+          }),
+        },
+      ],
+    };
     }
-    const resolvedSteps = hasField("steps")
+    let patchedStepsResult:
+      | Array<{
+          step: string;
+          expected_result?: string;
+          reusable_step_id?: number | null;
+        }>
+      | null
+      | undefined;
+    if (hasStepsPatch) {
+      if (!existingSteps || existingSteps.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: {
+                  code: "MISSING_STEPS",
+                  message:
+                    "Cannot patch steps because the test case has no steps.",
+                },
+              }),
+            },
+          ],
+        };
+      }
+
+      const outOfRange = (steps_patch ?? []).find((patch) => {
+        const index = patch.step_number - 1;
+        return index < 0 || index >= existingSteps.length;
+      });
+      if (outOfRange) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: {
+                  code: "INVALID_STEP_NUMBER",
+                  message: `Step number ${outOfRange.step_number} is out of range for test case ${id}.`,
+                },
+              }),
+            },
+          ],
+        };
+      }
+
+      const patchedSteps = existingSteps.map((s) => ({
+        step: s.step,
+        expectedResult: s.expectedResult,
+        reusableStepId: s.reusableStepId ?? null,
+      }));
+
+      (steps_patch ?? []).forEach((patch) => {
+        const index = patch.step_number - 1;
+        const target = patchedSteps[index];
+        if (!target) {
+          return;
+        }
+        if (patch.step !== undefined) {
+          target.step = patch.step;
+        }
+        if (patch.expected_result !== undefined) {
+          target.expectedResult = patch.expected_result;
+        }
+      });
+
+      patchedStepsResult = patchedSteps.map((s) => ({
+        step: s.step,
+        expected_result: s.expectedResult,
+        reusable_step_id: s.reusableStepId ?? null,
+      }));
+    }
+
+    const resolvedSteps = hasSteps
       ? steps === null
         ? null
         : steps?.map((s) => ({
             step: s.step,
             expected_result: s.expected_result,
           }))
-      : existingSteps?.map((s) => ({
-          step: s.step,
-          expected_result: s.expectedResult,
-          reusable_step_id: s.reusableStepId ?? null,
-        }));
+      : hasStepsPatch
+        ? patchedStepsResult
+        : existingSteps?.map((s) => ({
+            step: s.step,
+            expected_result: s.expectedResult,
+            reusable_step_id: s.reusableStepId ?? null,
+          }));
     const resolvedTags = hasField("tags")
       ? tags === null
         ? null
@@ -567,13 +981,18 @@ export async function handleUpdateTestCase(
           if (!name || id === undefined) {
             return map;
           }
+          const fieldType =
+            getField<string>(cf, "field_type") ?? getField<string>(cf, "type");
+          const options = getCustomFieldOptions(cf);
           map.set(name, {
             id,
             name,
             label: getField<string>(cf, "label"),
+            fieldType,
+            options,
           });
           return map;
-        }, new Map<string, { id: number; name: string; label?: string }>())
+        }, new Map<string, { id: number; name: string; label?: string; fieldType?: string; options?: unknown[] | null }>())
       : null;
 
     const resolvedCustomFields = hasField("custom_fields")
@@ -599,12 +1018,21 @@ export async function handleUpdateTestCase(
               if (!match) {
                 return undefined;
               }
+              const { value: resolvedValue, valueLabel: resolvedValueLabel } =
+                resolveDropdownValue(
+                  match.fieldType,
+                  match.options,
+                  cf.value,
+                  cf.valueLabel
+                );
               return {
                 id: match.id,
                 name: match.name,
-                value: cf.value,
+                value: resolvedValue,
                 ...(cf.label !== undefined ? { label: cf.label } : {}),
-                ...(cf.valueLabel !== undefined ? { valueLabel: cf.valueLabel } : {}),
+                ...(resolvedValueLabel !== undefined
+                  ? { valueLabel: resolvedValueLabel }
+                  : {}),
                 ...(cf.color !== undefined ? { color: cf.color } : {}),
                 ...(cf.label === undefined && match.label !== undefined
                   ? { label: match.label }
@@ -631,7 +1059,7 @@ export async function handleUpdateTestCase(
     const payload = {
       title: resolvedTitle,
       description: resolvedDescription ?? null,
-      priority: resolvedPriority ?? null,
+      priority: resolvedPriority,
       suiteId: resolvedSuiteId ?? null,
       steps: resolvedSteps === undefined ? [] : resolvedSteps,
       tags: resolvedTags === undefined ? [] : resolvedTags,

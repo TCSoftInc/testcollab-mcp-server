@@ -44,9 +44,8 @@ export const createTestCaseSchema = z.object({
     .optional()
     .describe("Project ID (uses TC_DEFAULT_PROJECT env var if not specified)"),
   title: z.string().min(1).describe("Test case title (required)"),
-  suite: z.string().optional().describe("Suite title (alias for suite_id)"),
-  suite_id: z
-    .union([z.number(), z.string()])
+  suite: z
+    .union([z.string(), z.number()])
     .optional()
     .describe("Suite ID or suite title"),
   description: z.string().optional().describe("Test case description (HTML supported)"),
@@ -93,8 +92,7 @@ Required fields:
 
 Optional fields:
 - project_id: Project ID (uses TC_DEFAULT_PROJECT if not specified)
-- suite: Suite title (alias for suite_id)
-- suite_id: Suite ID or suite title
+- suite: Suite ID or suite title
 - description: HTML-formatted description
 - priority: 0 (Low), 1 (Normal), 2 (High) - default is 1
 - steps: Array of { step: "action", expected_result: "result" }
@@ -115,7 +113,7 @@ Custom field format:
 Example:
 {
   "title": "Verify login with valid credentials",
-  "suite_id": 123,
+  "suite": 123,
   "priority": 2,
   "description": "<p>Test user login functionality</p>",
   "steps": [
@@ -141,10 +139,6 @@ Example:
         description: "Test case title (required)",
       },
       suite: {
-        type: "string",
-        description: "Suite title (alias for suite_id)",
-      },
-      suite_id: {
         oneOf: [{ type: "number" }, { type: "string" }],
         description: "Suite ID or suite title",
       },
@@ -252,6 +246,113 @@ const isNonNumericString = (value: unknown): value is string => {
   return trimmed.length > 0 && !numericIdPattern.test(trimmed);
 };
 
+const normalizeString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const isDropdownFieldType = (value: unknown): boolean => {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "dropdown" || normalized === "multipleselect";
+};
+
+const getCustomFieldOptions = (field: unknown): unknown[] | null => {
+  const direct = getField<unknown[]>(field, "options");
+  if (Array.isArray(direct)) {
+    return direct;
+  }
+  const extra = getField<Record<string, unknown>>(field, "extra");
+  const extraOptions = getField<unknown[]>(extra, "options");
+  if (Array.isArray(extraOptions)) {
+    return extraOptions;
+  }
+  return null;
+};
+
+type OptionLookup = {
+  id: string;
+  label: string;
+};
+
+const buildOptionLookup = (options: unknown[]): OptionLookup[] => {
+  const lookups: OptionLookup[] = [];
+  options.forEach((option, index) => {
+    if (typeof option === "string") {
+      const label = option.trim();
+      if (!label) {
+        return;
+      }
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (typeof option === "number") {
+      const value = String(option);
+      lookups.push({ label: value, id: value });
+      return;
+    }
+    if (!option || typeof option !== "object") {
+      return;
+    }
+    const labelRaw =
+      getField<string>(option, "label") ?? getField<string>(option, "name");
+    const label = typeof labelRaw === "string" ? labelRaw.trim() : undefined;
+    const idRaw =
+      getField<string | number>(option, "id") ??
+      getField<string | number>(option, "value") ??
+      getField<string | number>(option, "systemValue");
+    const id =
+      idRaw !== undefined && idRaw !== null ? String(idRaw) : undefined;
+
+    if (label && id) {
+      lookups.push({ label, id });
+      return;
+    }
+    if (label && !id) {
+      lookups.push({ label, id: String(index + 1) });
+      return;
+    }
+    if (!label && id) {
+      lookups.push({ label: id, id });
+    }
+  });
+  return lookups;
+};
+
+const resolveDropdownValue = (
+  fieldType: unknown,
+  options: unknown[] | null | undefined,
+  value: string | number | null,
+  valueLabel?: string
+): { value: string | number | null; valueLabel?: string } => {
+  if (!isDropdownFieldType(fieldType) || !options || options.length === 0) {
+    return { value, valueLabel };
+  }
+  const labelCandidate =
+    typeof valueLabel === "string" && valueLabel.trim().length > 0
+      ? valueLabel.trim()
+      : typeof value === "string" && isNonNumericString(value)
+        ? value.trim()
+        : undefined;
+  if (!labelCandidate) {
+    return { value, valueLabel };
+  }
+  const lookups = buildOptionLookup(options);
+  const match = lookups.find((lookup) => lookup.label === labelCandidate);
+  if (!match) {
+    return { value, valueLabel };
+  }
+  return {
+    value: match.id,
+    valueLabel: valueLabel ?? match.label,
+  };
+};
+
 const getField = <T>(item: unknown, key: string): T | undefined => {
   if (!item || typeof item !== "object") {
     return undefined;
@@ -331,7 +432,6 @@ export async function handleCreateTestCase(
     project_id,
     title,
     suite,
-    suite_id,
     description,
     priority,
     steps,
@@ -366,8 +466,10 @@ export async function handleCreateTestCase(
   try {
     const client = getApiClient();
 
-    const suiteInput = suite_id ?? suite;
-    const suiteNeedsLookup = isNonNumericString(suiteInput);
+    const suiteInput = suite;
+    const suiteNumericId = toNumberId(suiteInput);
+    const suiteTitle = normalizeString(suiteInput);
+    const suiteNeedsLookup = suiteNumericId === undefined && suiteTitle !== undefined;
     const tagsNeedLookup = tags?.some(isNonNumericString) ?? false;
     const requirementsNeedLookup =
       requirements?.some(isNonNumericString) ?? false;
@@ -403,11 +505,17 @@ export async function handleCreateTestCase(
         : Promise.resolve(null),
     ]);
 
-    let resolvedSuiteId = toNumberId(suiteInput);
+    let resolvedSuiteId = suiteNumericId;
     if (suiteNeedsLookup && suitesList) {
-      const match = suitesList.find(
-        (suite) => getField<string>(suite, "title") === suiteInput
-      );
+      const normalizedSuiteTitle = suiteTitle?.toLowerCase();
+      const match = suitesList.find((suite) => {
+        const title = normalizeString(getField<string>(suite, "title"));
+        return (
+          title !== undefined &&
+          normalizedSuiteTitle !== undefined &&
+          title.toLowerCase() === normalizedSuiteTitle
+        );
+      });
       resolvedSuiteId = toNumberId(match ? getField(match, "id") : undefined);
       if (resolvedSuiteId === undefined) {
         return {
@@ -417,7 +525,7 @@ export async function handleCreateTestCase(
               text: JSON.stringify({
                 error: {
                   code: "SUITE_NOT_FOUND",
-                  message: `Suite not found with title "${suiteInput}" in that project`,
+                  message: `Suite not found with title "${suiteTitle}" in that project`,
                 },
               }),
             },
@@ -472,13 +580,18 @@ export async function handleCreateTestCase(
           if (!name || id === undefined) {
             return map;
           }
+          const fieldType =
+            getField<string>(cf, "field_type") ?? getField<string>(cf, "type");
+          const options = getCustomFieldOptions(cf);
           map.set(name, {
             id,
             name,
             label: getField<string>(cf, "label"),
+            fieldType,
+            options,
           });
           return map;
-        }, new Map<string, { id: number; name: string; label?: string }>())
+        }, new Map<string, { id: number; name: string; label?: string; fieldType?: string; options?: unknown[] | null }>())
       : null;
 
     const resolvedCustomFields = custom_fields
@@ -502,12 +615,21 @@ export async function handleCreateTestCase(
             if (!match) {
               return undefined;
             }
+            const { value: resolvedValue, valueLabel: resolvedValueLabel } =
+              resolveDropdownValue(
+                match.fieldType,
+                match.options,
+                cf.value,
+                cf.valueLabel
+              );
             return {
               id: match.id,
               name: match.name,
-              value: cf.value,
+              value: resolvedValue,
               ...(cf.label !== undefined ? { label: cf.label } : {}),
-              ...(cf.valueLabel !== undefined ? { valueLabel: cf.valueLabel } : {}),
+              ...(resolvedValueLabel !== undefined
+                ? { valueLabel: resolvedValueLabel }
+                : {}),
               ...(cf.color !== undefined ? { color: cf.color } : {}),
               ...(cf.label === undefined && match.label !== undefined
                 ? { label: match.label }

@@ -2,7 +2,7 @@
 
 ## Problem
 
-When users say things like "list test cases in suite Login" to the MCP server, the AI has no way to resolve the suite name "Login" to its numeric ID. The `list_test_cases` tool accepts `suite_id: number`, so the AI either fails or has to ask the user for the ID - defeating the purpose of natural language interaction.
+When users say things like "list test cases in suite Login" to the MCP server, the AI has no way to resolve the suite name "Login" to its numeric ID. The `list_test_cases` tool accepts `suite` (ID or title), so the AI either fails or has to ask the user for the ID - defeating the purpose of natural language interaction.
 
 The same problem applies to tags, custom fields, and any other entity referenced by name but stored by numeric ID.
 

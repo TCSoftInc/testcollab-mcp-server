@@ -15,7 +15,7 @@
 - [x] `list_test_cases` - List with filtering, sorting, pagination
 - [x] `create_test_case` - Create new test case
 - [x] `update_test_case` - Update existing test case
-- [ ] `get_test_case` - Get single test case with full details
+- [x] `get_test_case` - Get single test case with full details
 - [ ] `delete_test_case` - Soft delete test case
 - [ ] `copy_test_case` - Duplicate test case to suite
 - [ ] `bulk_delete_test_cases` - Delete multiple (async queue job)

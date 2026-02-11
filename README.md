@@ -7,6 +7,7 @@ MCP (Model Context Protocol) server that exposes TestCollab test management func
 ### V1.0 (Current)
 - **Test Case Management**
   - `list_test_cases` - List test cases with filtering, sorting, and pagination
+  - `get_test_case` - Fetch a single test case with full details (including steps)
   - `create_test_case` - Create test cases with steps and custom fields
   - `update_test_case` - Update existing test cases
 
@@ -119,7 +120,7 @@ List test cases from a project with optional filtering.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
-| `suite_id` | number | No | Filter by suite |
+| `suite` | number\|string | No | Filter by suite ID or title |
 | `filter` | object | No | Filter conditions |
 | `sort` | array | No | Sort specification |
 | `limit` | number | No | Max results (1-100, default: 50) |
@@ -155,6 +156,42 @@ List test cases from a project with optional filtering.
 }
 ```
 
+### get_test_case
+
+Fetch a single test case with full details (including steps).
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | number | Yes | Test case ID |
+| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
+| `parse_reusable_steps` | boolean | No | Parse reusable steps into full steps (default: true) |
+
+**Example:**
+```json
+{
+  "id": 1835,
+  "parse_reusable_steps": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "testCase": {
+    "id": 1835,
+    "title": "login check",
+    "priority": 1,
+    "steps": [
+      { "step_number": 1, "step": "Navigate to login", "expected_result": "Login page loads" },
+      { "step_number": 2, "step": "Enter credentials", "expected_result": null }
+    ]
+  },
+  "stepsMissingExpectedResults": [2]
+}
+```
+
 ### create_test_case
 
 Create a new test case with optional custom fields.
@@ -164,7 +201,7 @@ Create a new test case with optional custom fields.
 |------|------|----------|-------------|
 | `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
 | `title` | string | Yes | Test case title |
-| `suite_id` | number | No | Suite to place test case in |
+| `suite` | number\|string | No | Suite ID or title to place test case in |
 | `description` | string | No | HTML-formatted description |
 | `priority` | number | No | 0=Low, 1=Normal, 2=High (default: 1) |
 | `steps` | array | No | Test steps array |
@@ -177,7 +214,7 @@ Create a new test case with optional custom fields.
 ```json
 {
   "title": "Verify login with valid credentials",
-  "suite_id": 123,
+  "suite": 123,
   "priority": 2,
   "description": "<p>Test user login</p>",
   "steps": [
@@ -216,7 +253,7 @@ Update an existing test case.
 | `id` | number | Yes | Test case ID to update |
 | `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
 | `title` | string | No | New title |
-| `suite_id` | number | No | Move to different suite |
+| `suite` | number\|string | No | Move to different suite by ID or title |
 | `description` | string | No | HTML-formatted description |
 | `priority` | number | No | 0=Low, 1=Normal, 2=High |
 | `steps` | array | No | Replace all steps |
