@@ -46,7 +46,31 @@ TC_DEFAULT_PROJECT=16
 | `TC_API_URL` | No | API base URL (default: `http://localhost:1337`) |
 | `TC_DEFAULT_PROJECT` | No | Default project ID - if set, `project_id` becomes optional in tool calls |
 
+Note: For HTTP transport (recommended for multi-client), send credentials per client via headers
+(`X-TC-API-Token`, `X-TC-API-URL`, `X-TC-Default-Project`). Env vars are a global fallback only.
+
 ## Usage
+
+### HTTP (recommended for multi-client)
+
+Start the HTTP server:
+
+```bash
+npm start
+```
+
+Configure any MCP client with a URL and headers. Example (Codex):
+
+```toml
+[mcp_servers.testcollab]
+url = "http://localhost:3100/mcp"
+http_headers = { "X-TC-Default-Project" = "17", X-TC-API-Token = "", X-TC-API-URL = "http://localhost:1337" }
+
+# (optional) for high security - use env var
+#env_http_headers = { "X-TC-Token" = "TESTCOLLAB_MCP_TOKEN" }
+```
+
+### Stdio (single-client)
 
 ### With Claude Desktop
 
@@ -88,26 +112,14 @@ Add to your Claude Code settings (`.claude/settings.json`):
 }
 ```
 
-### With Codex
-
-```toml
-[mcp_servers.testcollab]
-url = "http://localhost:3100/mcp"
-http_headers = { "X-TC-Default-Project" = "17", X-TC-API-Token = "", X-TC-API-URL = "http://localhost:1337" }
-
-# (optional) for high security - use env var
-#env_http_headers = { "X-TC-Token" = "TESTCOLLAB_MCP_TOKEN" }
-```
-
-
 ### Manual Testing
 
 ```bash
-# Start the server directly (for debugging)
-TC_API_TOKEN=your-token npm run dev
+# Start the HTTP server (recommended)
+npm start
 
-# Or with built version
-TC_API_TOKEN=your-token npm start
+# Start the stdio server (single-client)
+TC_API_TOKEN=your-token npm run start:stdio
 ```
 
 ## Available Tools
