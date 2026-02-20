@@ -14,6 +14,11 @@ import {
   getTestCaseSchema,
   handleGetTestCase,
 } from "./test-cases/index.js";
+import {
+  createTestPlanTool,
+  createTestPlanSchema,
+  handleCreateTestPlan,
+} from "./test-plans/index.js";
 import { handleProjectContext, resolveProjectId } from "../resources/project-context.js";
 
 // ============================================================================
@@ -105,8 +110,8 @@ export function registerTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   server.tool(
     "get_project_context",
-    `Get project context including suite tree, tags, custom fields, and requirements.
-Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names) to numeric IDs used by other tools.
+    `Get project context including suite tree, tags, custom fields, requirements, and project users.
+Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names, user names) to numeric IDs used by other tools.
 
 IMPORTANT: Call this tool at the start of every conversation before using any other TestCollab tool.
 This avoids errors from unresolved suite names, tag names, or custom field references.`,
@@ -251,6 +256,18 @@ Example:
     },
     async (args) => {
       return handleCreateTestCase(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // create_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    createTestPlanTool.name,
+    createTestPlanTool.description,
+    createTestPlanSchema.shape,
+    async (args) => {
+      return handleCreateTestPlan(args);
     }
   );
 

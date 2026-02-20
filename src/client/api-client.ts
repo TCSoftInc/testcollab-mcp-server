@@ -51,6 +51,17 @@ export interface AggridResponse {
   filteredCount: number;
 }
 
+export interface TestCaseSelectorQuery {
+  field: string;
+  operator: string;
+  value: string;
+}
+
+export interface TestCaseSelectorCollection {
+  testCases?: number[];
+  selector?: TestCaseSelectorQuery[];
+}
+
 // ============================================================================
 // API Client Class
 // ============================================================================
@@ -286,6 +297,130 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Create a new test plan.
+   */
+  async createTestPlan(data: {
+    projectId: number;
+    title: string;
+    description?: string;
+    priority?: number;
+    testPlanFolderId?: number | null;
+    startDate?: string;
+    endDate?: string;
+    customFields?: Array<{
+      id: number;
+      name: string;
+      label?: string;
+      value: string | number | Array<string | number> | null;
+      valueLabel?: string | string[];
+      color?: string;
+    }>;
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+    };
+
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.priority !== undefined) {
+      payload.priority = data.priority;
+    }
+    if (data.testPlanFolderId !== undefined) {
+      payload.test_plan_folder = data.testPlanFolderId;
+    }
+    if (data.startDate !== undefined) {
+      payload.start_date = data.startDate;
+    }
+    if (data.endDate !== undefined) {
+      payload.end_date = data.endDate;
+    }
+    if (data.customFields !== undefined) {
+      payload.custom_fields = data.customFields;
+    }
+
+    return this.rawRequest<Record<string, unknown>>("POST", "/testplans", payload);
+  }
+
+  /**
+   * Bulk add test cases to a test plan.
+   */
+  async bulkAddTestPlanTestCases(data: {
+    testplan: number;
+    testCaseCollection: TestCaseSelectorCollection;
+    assignee?: number | "me";
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      testplan: data.testplan,
+      testCaseCollection: data.testCaseCollection,
+    };
+    if (data.assignee !== undefined) {
+      payload.assignee = data.assignee;
+    }
+    return this.rawRequest<Record<string, unknown>>(
+      "POST",
+      "/testplantestcases/bulkAdd",
+      payload
+    );
+  }
+
+  /**
+   * Create or replace test plan configurations.
+   */
+  async createTestPlanConfigurations(data: {
+    projectId: number;
+    testplan: number;
+    parameters: Array<Array<{ id?: string; field: string; value: string }>>;
+  }): Promise<Array<Record<string, unknown>> | Record<string, unknown>> {
+    const payload = {
+      project: data.projectId,
+      testplan: data.testplan,
+      parameters: data.parameters,
+    };
+    return this.rawRequest<Array<Record<string, unknown>> | Record<string, unknown>>(
+      "POST",
+      "/testplanconfigurations",
+      payload
+    );
+  }
+
+  /**
+   * Assign a test plan.
+   */
+  async assignTestPlan(data: {
+    projectId: number;
+    testplan: number;
+    executor: "me" | "team";
+    assignmentCriteria: "testCase" | "configuration";
+    assignmentMethod: "automatic" | "manual";
+    assignment: {
+      user: Array<number | "me">;
+      testCases: TestCaseSelectorCollection;
+      configuration: number[] | null;
+    };
+  }): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(data.projectId));
+    params.set("testplan", String(data.testplan));
+
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      testplan: data.testplan,
+      executor: data.executor,
+      assignment_criteria: data.assignmentCriteria,
+      assignment_method: data.assignmentMethod,
+      assignment: data.assignment,
+    };
+
+    return this.rawRequest<Record<string, unknown>>(
+      "POST",
+      `/testplans/assign?${params.toString()}`,
+      payload
+    );
+  }
+
+  /**
    * Update an existing test case using raw API (supports partial updates and custom fields)
    */
   async updateTestCase(
@@ -372,6 +507,16 @@ export class TestCollabApiClient {
     });
   }
 
+  async listTestPlanFolders(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/testplanfolders?${params.toString()}`
+    );
+  }
+
   async listTags(projectId: number) {
     const params = new URLSearchParams();
     params.set("project", String(projectId));
@@ -398,14 +543,28 @@ export class TestCollabApiClient {
     );
   }
 
-  async listProjectCustomFields(projectId: number, companyId?: number) {
-    const entity = encodeURIComponent("TestCase");
+  async listProjectUsers(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/projectusers?${params.toString()}`
+    );
+  }
+
+  async listProjectCustomFields(
+    projectId: number,
+    companyId?: number,
+    entity: "TestCase" | "TestPlan" = "TestCase"
+  ) {
+    const encodedEntity = encodeURIComponent(entity);
     const params = new URLSearchParams();
     params.set("projects", String(projectId));
     if (companyId !== undefined) {
       params.set("company", String(companyId));
     }
-    params.set("entity", entity);
+    params.set("entity", encodedEntity);
     params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",

@@ -10,11 +10,13 @@ MCP (Model Context Protocol) server that exposes TestCollab test management func
   - `get_test_case` - Fetch a single test case with full details (including steps)
   - `create_test_case` - Create test cases with steps and custom fields
   - `update_test_case` - Update existing test cases
+- **Test Plan Management**
+  - `create_test_plan` - Create a test plan with optional cases, configurations, and assignment in one call
 
 ### Planned
 - Delete test cases
 - Suite management
-- Test plan management
+- Additional test plan management tools (list/get/update/delete)
 - Test execution recording
 
 ## Installation
@@ -304,6 +306,72 @@ Update an existing test case.
 }
 ```
 
+### create_test_plan
+
+Create a new test plan with optional test cases, configurations, and assignment.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
+| `title` | string | No | Test plan title (defaults to `Test Plan DD Month YYYY HH:mm:ss`) |
+| `description` | string | No | HTML-formatted description |
+| `priority` | number | No | 0=Low, 1=Normal, 2=High |
+| `test_plan_folder` | number\|string\|null | No | Folder ID/title, or `null` for root |
+| `start_date` | string | No | Planned start date (`YYYY-MM-DD`) |
+| `end_date` | string | No | Planned end date (`YYYY-MM-DD`) |
+| `custom_fields` | array | No | Array of custom field values |
+| `test_cases` | object | No | `{ test_case_ids?: number[]\|string[], selector?: {field,operator,value}[], assignee?: number\|string }` |
+| `configurations` | array | No | Array of configuration rows: `[[{field,value,id?}]]` |
+| `assignment` | object | No | `{ executor?, assignment_criteria?, assignment_method?, user_ids?, test_case_ids?, selector?, configuration_ids? }` |
+
+**Example:**
+```json
+{
+  "project_id": 16,
+  "title": "Release 2.9 Regression",
+  "description": "<p>Full validation for release 2.9</p>",
+  "priority": 1,
+  "test_plan_folder": 42,
+  "start_date": "2026-02-20",
+  "end_date": "2026-02-24",
+  "test_cases": {
+    "test_case_ids": [101, 102, 103]
+  },
+  "configurations": [
+    [
+      { "field": "Browser", "value": "Chrome" },
+      { "field": "OS", "value": "Windows" }
+    ]
+  ],
+  "assignment": {
+    "executor": "team",
+    "assignment_criteria": "testCase",
+    "assignment_method": "automatic",
+    "user_ids": [27, 31]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Test plan created successfully",
+  "testPlan": {
+    "id": 812,
+    "title": "Release 2.9 Regression",
+    "project_id": 16
+  },
+  "steps": {
+    "create_test_plan": { "endpoint": "/testplans", "status": "completed" },
+    "add_test_cases": { "endpoint": "/testplantestcases/bulkAdd", "status": "completed" },
+    "add_configurations": { "endpoint": "/testplanconfigurations", "status": "completed" },
+    "assign_test_plan": { "endpoint": "/testplans/assign", "status": "completed" }
+  }
+}
+```
+
 ## Development
 
 ```bash
@@ -341,6 +409,9 @@ tc-mcp-server/
 │   │   ├── test-cases/
 │   │   │   ├── index.ts
 │   │   │   └── list.ts   # list_test_cases tool
+│   │   ├── test-plans/
+│   │   │   ├── index.ts
+│   │   │   └── create.ts # create_test_plan tool
 │   │   └── suites/
 │   │       └── index.ts
 │   └── types/

@@ -1,7 +1,7 @@
 /**
  * project_context MCP Resource
  *
- * Provides project metadata (suite tree, custom fields, tags, etc.)
+ * Provides project metadata (suite tree, custom fields, tags, users, etc.)
  * so the AI can resolve human-readable names to numeric IDs.
  */
 
@@ -37,12 +37,21 @@ type RequirementNode = {
   requirement_id?: string;
 };
 
+type ProjectUserNode = {
+  id: number;
+  name: string;
+  email?: string;
+  username?: string;
+  role?: string;
+};
+
 type ProjectContextPayload = {
   project_id: number;
   suites: SuiteNode[];
   tags: TagNode[];
   custom_fields: CustomFieldNode[];
   requirements: RequirementNode[];
+  users: ProjectUserNode[];
 };
 
 type CacheEntry = {
@@ -86,6 +95,14 @@ const toNumberId = (value: unknown): number | undefined => {
     }
   }
   return undefined;
+};
+
+const normalizeString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 };
 
 const getCompanyIdFromProject = (project: unknown): number | undefined => {
@@ -196,6 +213,66 @@ const mapRequirements = (requirements: unknown[]): RequirementNode[] =>
       };
     })
     .filter((req): req is RequirementNode => Boolean(req));
+
+const mapProjectUsers = (projectUsers: unknown[]): ProjectUserNode[] => {
+  const deduped = new Map<number, ProjectUserNode>();
+
+  projectUsers.forEach((projectUser) => {
+    const rawUser = getField<unknown>(projectUser, "user");
+    const userObject =
+      rawUser && typeof rawUser === "object"
+        ? (rawUser as Record<string, unknown>)
+        : undefined;
+
+    const id =
+      (userObject ? toNumberId(getField(userObject, "id")) : undefined) ??
+      toNumberId(rawUser) ??
+      toNumberId(getField(projectUser, "user_id")) ??
+      toNumberId(getField(projectUser, "userId"));
+
+    if (!id) {
+      return;
+    }
+
+    const roleRaw = getField(projectUser, "role");
+    const roleObject =
+      roleRaw && typeof roleRaw === "object"
+        ? (roleRaw as Record<string, unknown>)
+        : undefined;
+
+    const name =
+      (userObject ? normalizeString(getField(userObject, "name")) : undefined) ??
+      normalizeString(getField(projectUser, "name")) ??
+      `User ${id}`;
+    const email = userObject
+      ? normalizeString(getField(userObject, "email"))
+      : undefined;
+    const username = userObject
+      ? normalizeString(getField(userObject, "username"))
+      : undefined;
+    const role =
+      (roleObject
+        ? normalizeString(getField(roleObject, "name")) ??
+          normalizeString(getField(roleObject, "title"))
+        : undefined) ?? normalizeString(roleRaw);
+
+    deduped.set(id, {
+      id,
+      name,
+      ...(email ? { email } : {}),
+      ...(username ? { username } : {}),
+      ...(role ? { role } : {}),
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byName = a.name.localeCompare(b.name);
+    if (byName !== 0) {
+      return byName;
+    }
+    return a.id - b.id;
+  });
+};
 
 const mapCustomFields = (customFields: unknown[]): CustomFieldNode[] =>
   customFields
@@ -388,13 +465,25 @@ export async function handleProjectContext(
         entity: "TestCase",
       })}`
     );
+    console.log(
+      `${apiLogPrefix} GET /projectusers params: ${JSON.stringify({
+        projectId,
+      })}`
+    );
 
-    const [suitesList, tagsList, requirementsList, customFieldsList] =
+    const [suitesList, tagsList, requirementsList, customFieldsList, projectUsersList] =
       await Promise.all([
         client.listSuites(projectId),
         client.listTags(projectId),
         client.listRequirements(projectId),
         client.listProjectCustomFields(projectId, companyId),
+        client.listProjectUsers(projectId).catch((error) => {
+          console.warn(
+            `${logPrefix} Failed to fetch project users for ${projectId}`,
+            error
+          );
+          return [];
+        }),
       ]);
 
     const suites = buildSuiteTree(Array.isArray(suitesList) ? suitesList : []);
@@ -405,6 +494,9 @@ export async function handleProjectContext(
     const custom_fields = mapCustomFields(
       Array.isArray(customFieldsList) ? customFieldsList : []
     );
+    const users = mapProjectUsers(
+      Array.isArray(projectUsersList) ? projectUsersList : []
+    );
 
     const payload: ProjectContextPayload = {
       project_id: projectId,
@@ -412,6 +504,7 @@ export async function handleProjectContext(
       tags,
       custom_fields,
       requirements,
+      users,
     };
 
     if (cacheKey) {
@@ -423,7 +516,7 @@ export async function handleProjectContext(
 
     const durationMs = Date.now() - startTime;
     console.log(
-      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length})`
+      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length}, users: ${users.length})`
     );
 
     return {
