@@ -9,3 +9,13 @@ export {
   createTestPlanSchema,
   handleCreateTestPlan,
 } from "./create.js";
+export {
+  listTestPlansTool,
+  listTestPlansSchema,
+  handleListTestPlans,
+} from "./list.js";
+export {
+  updateTestPlanTool,
+  updateTestPlanSchema,
+  handleUpdateTestPlan,
+} from "./update.js";

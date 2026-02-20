@@ -13,6 +13,7 @@ import {
 } from "../../client/api-client.js";
 import { getConfig } from "../../config.js";
 import { getRequestContext } from "../../context.js";
+import { getCachedProjectContext } from "../../resources/project-context.js";
 
 // ============================================================================
 // Schema Definitions
@@ -382,6 +383,12 @@ type ProjectUserLookup = {
   normalizedName: string;
   normalizedUsername?: string;
   normalizedEmail?: string;
+};
+
+type TestPlanFolderLookup = {
+  id: number;
+  title: string;
+  normalizedTitle: string;
 };
 
 const numericIdPattern = /^\d+$/;
@@ -762,6 +769,43 @@ const findProjectUserMatches = (
   );
 };
 
+const mapTestPlanFoldersForLookup = (folders: unknown[]): TestPlanFolderLookup[] => {
+  const deduped = new Map<number, TestPlanFolderLookup>();
+
+  folders.forEach((folder) => {
+    const id = toNumberId(getField(folder, "id"));
+    const title =
+      normalizeString(getField<string>(folder, "title")) ??
+      normalizeString(getField<string>(folder, "name"));
+
+    if (!id || !title) {
+      return;
+    }
+
+    deduped.set(id, {
+      id,
+      title,
+      normalizedTitle: normalizeOptionLabel(title),
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
+
+const findFoldersByTitle = (
+  folders: TestPlanFolderLookup[],
+  title: string
+): TestPlanFolderLookup[] => {
+  const normalized = normalizeOptionLabel(title);
+  return folders.filter((folder) => folder.normalizedTitle === normalized);
+};
+
 const toSelectorCollection = (
   testCaseIds: number[],
   selector: TestCaseSelectorQuery[] | undefined
@@ -1083,14 +1127,22 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
             );
           }
 
-          const folders = await client.listTestPlanFolders(resolvedProjectId);
-          const matchedFolders = folders.filter((folder) => {
-            const title = normalizeString(getField<string>(folder, "title"));
-            return (
-              title !== undefined &&
-              normalizeOptionLabel(title) === normalizeOptionLabel(folderTitle)
+          const cachedContext = getCachedProjectContext(resolvedProjectId);
+          const cachedFolders = mapTestPlanFoldersForLookup(
+            Array.isArray(cachedContext?.test_plan_folders)
+              ? cachedContext.test_plan_folders
+              : []
+          );
+
+          let matchedFolders = findFoldersByTitle(cachedFolders, folderTitle);
+
+          if (matchedFolders.length !== 1) {
+            const folders = await client.listTestPlanFolders(resolvedProjectId);
+            const liveFolders = mapTestPlanFoldersForLookup(
+              Array.isArray(folders) ? folders : []
             );
-          });
+            matchedFolders = findFoldersByTitle(liveFolders, folderTitle);
+          }
 
           if (matchedFolders.length === 0) {
             return toError(
@@ -1100,9 +1152,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
           }
 
           if (matchedFolders.length > 1) {
-            const matchingIds = matchedFolders
-              .map((folder) => extractId(folder))
-              .filter((id): id is number => id !== undefined);
+            const matchingIds = matchedFolders.map((folder) => folder.id);
             return toError(
               "AMBIGUOUS_TEST_PLAN_FOLDER",
               `Multiple folders matched "${folderTitle}". Provide folder ID instead.`,
@@ -1110,13 +1160,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
             );
           }
 
-          resolvedFolderId = extractId(matchedFolders[0]);
-          if (resolvedFolderId === undefined) {
-            return toError(
-              "INVALID_TEST_PLAN_FOLDER",
-              `Matched folder "${folderTitle}" did not contain a valid ID.`
-            );
-          }
+          resolvedFolderId = matchedFolders[0].id;
         }
       }
     }

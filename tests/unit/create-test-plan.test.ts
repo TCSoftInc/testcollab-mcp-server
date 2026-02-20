@@ -3,13 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../src/client/api-client.js", () => ({
   getApiClient: vi.fn(),
 }));
+vi.mock("../../src/resources/project-context.js", () => ({
+  getCachedProjectContext: vi.fn(),
+}));
 
 type HandleCreateTestPlan =
   typeof import("../../src/tools/test-plans/create.js").handleCreateTestPlan;
 type GetApiClient = typeof import("../../src/client/api-client.js").getApiClient;
+type GetCachedProjectContext =
+  typeof import("../../src/resources/project-context.js").getCachedProjectContext;
 
 let handleCreateTestPlan: HandleCreateTestPlan;
 let getApiClient: GetApiClient;
+let getCachedProjectContext: GetCachedProjectContext;
 
 const loadModules = async () => {
   const createTestPlanTool = await import("../../src/tools/test-plans/create.js");
@@ -17,6 +23,9 @@ const loadModules = async () => {
 
   const apiClient = await import("../../src/client/api-client.js");
   getApiClient = apiClient.getApiClient;
+
+  const projectContext = await import("../../src/resources/project-context.js");
+  getCachedProjectContext = projectContext.getCachedProjectContext;
 };
 
 describe("create_test_plan tool", () => {
@@ -27,6 +36,7 @@ describe("create_test_plan tool", () => {
     process.env.TC_API_URL = "http://example.local";
     process.env.TC_DEFAULT_PROJECT = "16";
     await loadModules();
+    vi.mocked(getCachedProjectContext).mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -161,6 +171,47 @@ describe("create_test_plan tool", () => {
         configuration: null,
       },
     });
+  });
+
+  it("resolves test_plan_folder title from cached project context", async () => {
+    const cachedContext: NonNullable<ReturnType<GetCachedProjectContext>> = {
+      project_id: 16,
+      suites: [],
+      tags: [],
+      custom_fields: [],
+      requirements: [],
+      test_plan_folders: [{ id: 42, title: "Mobile", parent_id: null }],
+      users: [],
+    };
+    vi.mocked(getCachedProjectContext).mockReturnValue(cachedContext);
+
+    const listTestPlanFolders = vi.fn();
+    const createTestPlan = vi
+      .fn()
+      .mockResolvedValue({ id: 777, title: "Release 2.9 Regression" });
+
+    vi.mocked(getApiClient).mockReturnValue({
+      listTestPlanFolders,
+      createTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Release 2.9 Regression",
+      test_plan_folder: "mobile",
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(listTestPlanFolders).not.toHaveBeenCalled();
+    expect(createTestPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 16,
+        testPlanFolderId: 42,
+      })
+    );
   });
 
   it('passes test_cases.assignee as "me" for bulk add and auto-assignment', async () => {

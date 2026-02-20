@@ -7,9 +7,11 @@
 import {
   createConfiguration,
   TestCasesApi,
+  TestPlansApi,
   SuitesApi,
   type Configuration,
   type TestCase as SDKTestCase,
+  type TestPlan as SDKTestPlan,
 } from "@testcollab/sdk";
 import { getConfig } from "../config.js";
 import { getRequestContext } from "../context.js";
@@ -76,6 +78,7 @@ export class TestCollabApiClient {
   private baseUrl: string;
   private token: string;
   private testCasesApi: TestCasesApi;
+  private testPlansApi: TestPlansApi;
   private suitesApi: SuitesApi;
 
   constructor(credentials?: ApiClientCredentials) {
@@ -96,6 +99,7 @@ export class TestCollabApiClient {
 
     // Initialize API instances
     this.testCasesApi = new TestCasesApi(this.config);
+    this.testPlansApi = new TestPlansApi(this.config);
     this.suitesApi = new SuitesApi(this.config);
   }
 
@@ -195,6 +199,29 @@ export class TestCollabApiClient {
       filteredCount: response.filteredCount,
       lastRow: response.lastRow ?? undefined,
     };
+  }
+
+  /**
+   * List test plans with optional filtering, sorting, and pagination.
+   */
+  async listTestPlans(params: {
+    projectId: number;
+    limit?: number;
+    offset?: number;
+    sort?: string;
+    filter?: Record<string, unknown>;
+  }): Promise<SDKTestPlan[]> {
+    const { projectId, limit = 25, offset = 0, sort, filter } = params;
+
+    return this.testPlansApi.getTestPlans({
+      project: projectId,
+      limit,
+      start: offset,
+      ...(sort ? { sort } : {}),
+      ...(filter && Object.keys(filter).length > 0
+        ? { filter: JSON.stringify(filter) }
+        : {}),
+    });
   }
 
   /**
@@ -341,6 +368,86 @@ export class TestCollabApiClient {
     }
 
     return this.rawRequest<Record<string, unknown>>("POST", "/testplans", payload);
+  }
+
+  /**
+   * Get a single test plan by ID using raw API (preserves full payload).
+   */
+  async getTestPlanRaw(id: number): Promise<Record<string, unknown>> {
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/testplans/${encodedId}`
+    );
+  }
+
+  /**
+   * Update an existing test plan using raw API.
+   */
+  async updateTestPlan(
+    id: number,
+    data: {
+      projectId: number;
+      title: string;
+      priority: number;
+      status: number;
+      testPlanFolderId: number | null;
+      description?: string | null;
+      startDate?: string | null;
+      endDate?: string | null;
+      archived?: boolean;
+      assignmentMethod?: "automatic" | "manual";
+      assignmentCriteria?: "testCase" | "configuration";
+      assignedTo?: number[];
+      customFields?: Array<{
+        id: number;
+        name: string;
+        label?: string;
+        value: string | number | Array<string | number> | null;
+        valueLabel?: string | string[];
+        color?: string;
+      }>;
+    }
+  ): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+      priority: data.priority,
+      status: data.status,
+      test_plan_folder: data.testPlanFolderId,
+    };
+
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.startDate !== undefined) {
+      payload.start_date = data.startDate;
+    }
+    if (data.endDate !== undefined) {
+      payload.end_date = data.endDate;
+    }
+    if (data.archived !== undefined) {
+      payload.archived = data.archived;
+    }
+    if (data.assignmentMethod !== undefined) {
+      payload.assignment_method = data.assignmentMethod;
+    }
+    if (data.assignmentCriteria !== undefined) {
+      payload.assignment_criteria = data.assignmentCriteria;
+    }
+    if (data.assignedTo !== undefined) {
+      payload.assigned_to = data.assignedTo;
+    }
+    if (data.customFields !== undefined) {
+      payload.custom_fields = data.customFields;
+    }
+
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "PUT",
+      `/testplans/${encodedId}`,
+      payload
+    );
   }
 
   /**

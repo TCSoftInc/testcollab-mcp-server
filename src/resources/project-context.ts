@@ -37,6 +37,12 @@ type RequirementNode = {
   requirement_id?: string;
 };
 
+type TestPlanFolderNode = {
+  id: number;
+  title: string;
+  parent_id: number | null;
+};
+
 type ProjectUserNode = {
   id: number;
   name: string;
@@ -51,6 +57,7 @@ type ProjectContextPayload = {
   tags: TagNode[];
   custom_fields: CustomFieldNode[];
   requirements: RequirementNode[];
+  test_plan_folders: TestPlanFolderNode[];
   users: ProjectUserNode[];
 };
 
@@ -213,6 +220,39 @@ const mapRequirements = (requirements: unknown[]): RequirementNode[] =>
       };
     })
     .filter((req): req is RequirementNode => Boolean(req));
+
+const mapTestPlanFolders = (folders: unknown[]): TestPlanFolderNode[] => {
+  const deduped = new Map<number, TestPlanFolderNode>();
+
+  folders.forEach((folder) => {
+    const id = toNumberId(getField(folder, "id"));
+    const title =
+      normalizeString(getField<string>(folder, "title")) ??
+      normalizeString(getField<string>(folder, "name"));
+
+    if (!id || !title) {
+      return;
+    }
+
+    const parentId =
+      toNumberId(getField(folder, "parent_id")) ??
+      toNumberId(getField(folder, "parentId"));
+
+    deduped.set(id, {
+      id,
+      title,
+      parent_id: parentId ?? null,
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
 
 const mapProjectUsers = (projectUsers: unknown[]): ProjectUserNode[] => {
   const deduped = new Map<number, ProjectUserNode>();
@@ -466,25 +506,43 @@ export async function handleProjectContext(
       })}`
     );
     console.log(
+      `${apiLogPrefix} GET /testplanfolders params: ${JSON.stringify({
+        projectId,
+      })}`
+    );
+    console.log(
       `${apiLogPrefix} GET /projectusers params: ${JSON.stringify({
         projectId,
       })}`
     );
 
-    const [suitesList, tagsList, requirementsList, customFieldsList, projectUsersList] =
-      await Promise.all([
-        client.listSuites(projectId),
-        client.listTags(projectId),
-        client.listRequirements(projectId),
-        client.listProjectCustomFields(projectId, companyId),
-        client.listProjectUsers(projectId).catch((error) => {
-          console.warn(
-            `${logPrefix} Failed to fetch project users for ${projectId}`,
-            error
-          );
-          return [];
-        }),
-      ]);
+    const [
+      suitesList,
+      tagsList,
+      requirementsList,
+      customFieldsList,
+      testPlanFoldersList,
+      projectUsersList,
+    ] = await Promise.all([
+      client.listSuites(projectId),
+      client.listTags(projectId),
+      client.listRequirements(projectId),
+      client.listProjectCustomFields(projectId, companyId),
+      client.listTestPlanFolders(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch test plan folders for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+      client.listProjectUsers(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch project users for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+    ]);
 
     const suites = buildSuiteTree(Array.isArray(suitesList) ? suitesList : []);
     const tags = mapTags(Array.isArray(tagsList) ? tagsList : []);
@@ -493,6 +551,9 @@ export async function handleProjectContext(
     );
     const custom_fields = mapCustomFields(
       Array.isArray(customFieldsList) ? customFieldsList : []
+    );
+    const test_plan_folders = mapTestPlanFolders(
+      Array.isArray(testPlanFoldersList) ? testPlanFoldersList : []
     );
     const users = mapProjectUsers(
       Array.isArray(projectUsersList) ? projectUsersList : []
@@ -504,6 +565,7 @@ export async function handleProjectContext(
       tags,
       custom_fields,
       requirements,
+      test_plan_folders,
       users,
     };
 
@@ -516,7 +578,7 @@ export async function handleProjectContext(
 
     const durationMs = Date.now() - startTime;
     console.log(
-      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length}, users: ${users.length})`
+      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, users: ${users.length})`
     );
 
     return {

@@ -18,6 +18,12 @@ import {
   createTestPlanTool,
   createTestPlanSchema,
   handleCreateTestPlan,
+  listTestPlansTool,
+  listTestPlansSchema,
+  handleListTestPlans,
+  updateTestPlanTool,
+  updateTestPlanSchema,
+  handleUpdateTestPlan,
 } from "./test-plans/index.js";
 import { handleProjectContext, resolveProjectId } from "../resources/project-context.js";
 
@@ -110,8 +116,8 @@ export function registerTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   server.tool(
     "get_project_context",
-    `Get project context including suite tree, tags, custom fields, requirements, and project users.
-Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names, user names) to numeric IDs used by other tools.
+    `Get project context including suite tree, tags, custom fields, requirements, test plan folders, and project users.
+Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names, folder titles, user names) to numeric IDs used by other tools.
 
 IMPORTANT: Call this tool at the start of every conversation before using any other TestCollab tool.
 This avoids errors from unresolved suite names, tag names, or custom field references.`,
@@ -260,6 +266,18 @@ Example:
   );
 
   // -------------------------------------------------------------------------
+  // list_test_plans
+  // -------------------------------------------------------------------------
+  server.tool(
+    listTestPlansTool.name,
+    listTestPlansTool.description,
+    listTestPlansSchema.shape,
+    async (args) => {
+      return handleListTestPlans(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // create_test_plan
   // -------------------------------------------------------------------------
   server.tool(
@@ -268,6 +286,18 @@ Example:
     createTestPlanSchema.shape,
     async (args) => {
       return handleCreateTestPlan(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // update_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    updateTestPlanTool.name,
+    updateTestPlanTool.description,
+    updateTestPlanSchema.shape,
+    async (args) => {
+      return handleUpdateTestPlan(args);
     }
   );
 
