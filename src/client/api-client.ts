@@ -614,6 +614,104 @@ export class TestCollabApiClient {
     });
   }
 
+  /**
+   * Create a new suite using raw API
+   */
+  async createSuite(data: {
+    projectId: number;
+    title: string;
+    description?: string;
+    parentId?: number | null;
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+    };
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.parentId !== undefined) {
+      payload.parent_id = data.parentId;
+    }
+    return this.rawRequest<Record<string, unknown>>("POST", "/suites", payload);
+  }
+
+  /**
+   * Get a single suite by ID using raw API
+   */
+  async getSuite(id: number, projectId: number): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/suites/${encodedId}?${params.toString()}`
+    );
+  }
+
+  /**
+   * Update a suite using raw API
+   */
+  async updateSuite(
+    id: number,
+    data: {
+      projectId: number;
+      title?: string;
+      description?: string | null;
+      parentId?: number | null;
+    }
+  ): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {};
+    if (data.title !== undefined) {
+      payload.title = data.title;
+    }
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.parentId !== undefined) {
+      payload.parent_id = data.parentId;
+    }
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "PUT",
+      `/suites/${encodedId}?project=${encodeURIComponent(String(data.projectId))}`,
+      payload
+    );
+  }
+
+  /**
+   * Delete a suite using raw API
+   */
+  async deleteSuite(id: number, projectId: number): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "DELETE",
+      `/suites/${encodedId}?${params.toString()}`
+    );
+  }
+
+  /**
+   * Set suite sort order using raw API
+   */
+  async setSuiteOrder(data: {
+    projectId: number;
+    parentId: number | null;
+    suiteIds: number[];
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      parent_id: data.parentId,
+      suites: data.suiteIds,
+    };
+    return this.rawRequest<Record<string, unknown>>(
+      "POST",
+      "/suites/setOrder",
+      payload
+    );
+  }
+
   async listTestPlanFolders(projectId: number) {
     const params = new URLSearchParams();
     params.set("project", String(projectId));
