@@ -53,6 +53,10 @@ type ProjectUserNode = {
 
 type ProjectContextPayload = {
   project_id: number;
+  project_name?: string;
+  project_description?: string;
+  app_type?: string;
+  app_type_other?: string;
   suites: SuiteNode[];
   tags: TagNode[];
   custom_fields: CustomFieldNode[];
@@ -466,6 +470,10 @@ export async function handleProjectContext(
     const client = getApiClient();
 
     let companyId: number | undefined;
+    let projectName: string | undefined;
+    let projectDescription: string | undefined;
+    let appType: string | undefined;
+    let appTypeOther: string | undefined;
     try {
       console.log(
         `${apiLogPrefix} GET /projects/{id} params: ${JSON.stringify({
@@ -474,6 +482,10 @@ export async function handleProjectContext(
       );
       const project = await client.getProject(projectId);
       companyId = getCompanyIdFromProject(project);
+      projectName = normalizeString(getField<string>(project, "name"));
+      projectDescription = normalizeString(getField<string>(project, "description"));
+      appType = normalizeString(getField<string>(project, "app_type"));
+      appTypeOther = normalizeString(getField<string>(project, "app_type_other"));
     } catch (error) {
       console.warn(
         `${logPrefix} Failed to fetch project ${projectId} for company ID`,
@@ -561,6 +573,10 @@ export async function handleProjectContext(
 
     const payload: ProjectContextPayload = {
       project_id: projectId,
+      ...(projectName ? { project_name: projectName } : {}),
+      ...(projectDescription ? { project_description: projectDescription } : {}),
+      ...(appType ? { app_type: appType } : {}),
+      ...(appType === "other" && appTypeOther ? { app_type_other: appTypeOther } : {}),
       suites,
       tags,
       custom_fields,

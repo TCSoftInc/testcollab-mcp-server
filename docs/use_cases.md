@@ -2,53 +2,77 @@
 
 This document describes common use cases for the TestCollab MCP Server when integrated with AI coding assistants like Claude Code, Cursor, Windsurf, or Codex.
 
-## Configuration
+## Setup
 
-### For Claude Code (Desktop App)
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "testcollab": {
-      "url": "http://localhost:3100/mcp",
-      "headers": {
-        "X-TC-API-Token": "your-api-token",
-        "X-TC-API-URL": "https://api.testcollab.io",
-        "X-TC-Default-Project": "16"
-      }
-    }
-  }
-}
-```
-
-### For Codex CLI
+See the [Installation Guide](install.md) for full setup instructions. Quick start for Claude Code:
 
 ```bash
-codex --mcp-server-url http://localhost:3100/mcp \
-  --header "X-TC-API-Token: your-api-token" \
-  --header "X-TC-API-URL: https://api.testcollab.io" \
-  --header "X-TC-Default-Project: 16"
+claude mcp add testcollab \
+  -e TC_API_TOKEN=your-api-token \
+  -e TC_API_URL=https://api.testcollab.io \
+  -e TC_DEFAULT_PROJECT=16 \
+  -- npx -y @testcollab/mcp-server
 ```
-
-### Environment Variables (for stdio mode)
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TC_API_TOKEN` | Yes | API token from TestCollab user profile |
-| `TC_API_URL` | No | API base URL (default: `http://localhost:1337`) |
-| `TC_DEFAULT_PROJECT` | No | Default project ID |
 
 ---
 
 ## Available Tools
 
+### Test Cases
 | Tool | Description |
 |------|-------------|
+| `get_project_context` | Get suites, tags, custom fields, requirements, and users for a project |
 | `list_test_cases` | Query test cases with filtering, sorting, and pagination |
-| `create_test_case` | Create a new test case with title, steps, priority, etc. |
-| `update_test_case` | Update an existing test case's fields |
+| `get_test_case` | Fetch a single test case with full step details |
+| `create_test_case` | Create a test case with steps, tags, and custom fields |
+| `update_test_case` | Update any test case field, including step patching |
+
+### Test Plans
+| Tool | Description |
+|------|-------------|
+| `list_test_plans` | List test plans with filtering and sorting |
+| `create_test_plan` | Create a test plan with cases, configurations, and assignment |
+| `update_test_plan` | Update test plan metadata, status, or assignment |
+
+### Suites
+| Tool | Description |
+|------|-------------|
+| `list_suites` | List all test suites in a project |
+| `get_suite` | Get suite details |
+| `create_suite` | Create a new suite |
+| `update_suite` | Update a suite |
+| `delete_suite` | Delete a suite |
+| `move_suite` | Move a suite to a different parent |
+| `reorder_suites` | Reorder suites within a parent |
+
+---
+
+## YOLO Mode — Full Codebase Test Generation
+
+With auto-accept mode enabled in your AI coding assistant (e.g. YOLO mode), you can point the AI at your entire codebase and have it autonomously scan the code, create a suite structure, and generate test cases — all in one go.
+
+**Example prompt:**
+> "Scan this entire codebase. Create suites mirroring the module structure and generate test cases with detailed steps for every feature you find."
+
+**What happens:**
+1. The AI reads your source files, routes, controllers, and models
+2. Creates a suite hierarchy matching your code structure
+3. Generates test cases with steps for each feature, endpoint, or user flow it discovers
+
+**Benchmarks:**
+
+| Codebase size | Approximate time | What you get |
+|---------------|-----------------|--------------|
+| Small (< 20 files) | ~5 minutes | 20-40 test cases across 5-10 suites |
+| Medium (~50 files) | ~20-30 minutes | 50-100+ test cases across 15-25 suites |
+| Large (100+ files) | ~45-60 minutes | 150+ test cases across 30+ suites |
+
+This works best with auto-accept / YOLO mode enabled in your client, so the AI doesn't pause for approval on each tool call.
+
+**Accuracy notes:**
+- Suite structures and test case titles are generally accurate — the AI infers these well from code structure and naming.
+- Test steps can sometimes be hallucinated, especially for UI flows the AI hasn't directly observed. Review generated steps before using them in execution.
+- For best results, make sure your TestCollab project has a **detailed project description** — specify what kind of application you're testing (web app, REST API, mobile app, desktop, IoT, etc.), the tech stack, and key user roles. This gives the AI the context it needs to write realistic, actionable steps instead of generic ones.
 
 ---
 
@@ -507,6 +531,112 @@ These use cases show how developers use TestCollab through AI assistants during 
     {"step": "Wait for rate limit window to reset", "expected_result": "Subsequent requests succeed"}
   ]
 }
+```
+
+---
+
+### 11. Creating a Test Plan for a Sprint
+
+**Context:** Sprint starts Monday and the QA lead needs a test plan with relevant cases assigned to the team.
+
+**User prompt:**
+> "Create a test plan called 'Sprint 14 Regression' with all high-priority test cases. Assign it round-robin to the QA team."
+
+**What the AI does:**
+1. Lists high-priority test cases to get their IDs
+2. Creates a test plan with those cases and automatic assignment
+
+**Tool calls:**
+```json
+// Step 1: Find high-priority cases
+// list_test_cases with filter: priority = 2
+
+// Step 2: Create the plan
+{
+  "title": "Sprint 14 Regression",
+  "priority": 2,
+  "start_date": "2026-02-23",
+  "end_date": "2026-03-06",
+  "test_cases": {
+    "test_case_ids": [101, 102, 103, 104, 105]
+  },
+  "assignment": {
+    "executor": "team",
+    "assignment_criteria": "testCase",
+    "assignment_method": "automatic",
+    "user_ids": [27, 31, 45]
+  }
+}
+```
+
+---
+
+### 12. Updating Test Plan Status After Execution
+
+**Context:** QA finished running a test plan and wants to mark it as complete.
+
+**User prompt:**
+> "Mark the 'Sprint 13 Regression' test plan as finished and move it to the Archive folder."
+
+**What the AI does:**
+1. Finds the test plan by title
+2. Updates its status and folder
+
+**Tool call:**
+```json
+{
+  "id": 812,
+  "status": "finished",
+  "test_plan_folder": "Archive",
+  "archived": true
+}
+```
+
+---
+
+### 13. Organizing Suites for a New Module
+
+**Context:** Developer is starting work on a new Payments module and needs a suite structure.
+
+**User prompt:**
+> "Create a suite hierarchy for the Payments module: parent suite 'Payments', with child suites 'Checkout Flow', 'Refunds', and 'Subscription Billing'."
+
+**What the AI does:**
+1. Creates the parent suite
+2. Creates three child suites under it
+
+**Tool calls:**
+```json
+// Step 1: Create parent
+{ "title": "Payments" }
+// Returns: { "id": 50 }
+
+// Step 2: Create children
+{ "title": "Checkout Flow", "parent_id": 50 }
+{ "title": "Refunds", "parent_id": 50 }
+{ "title": "Subscription Billing", "parent_id": 50 }
+```
+
+---
+
+### 14. Reorganizing Suite Structure
+
+**Context:** Team decides to restructure suites — moving a suite under a different parent and reordering.
+
+**User prompt:**
+> "Move the 'Email Notifications' suite under 'Settings', and reorder Settings children so 'Email Notifications' comes first."
+
+**What the AI does:**
+1. Moves the suite using `move_suite`
+2. Reorders children using `reorder_suites`
+
+**Tool calls:**
+```json
+// Step 1: Move suite
+// move_suite: { "id": 34, "parent_id": 20 }
+
+// Step 2: Reorder children of Settings (suite 20)
+// reorder_suites: { "parent_id": 20, "suite_ids": [34, 21, 22, 23] }
 ```
 
 ---
