@@ -104,7 +104,7 @@ You should see the TestCollab tools listed. Try: *"Show me all test cases"*.
 | **list_test_plans** | List test plans with filtering and sorting |
 | **create_test_plan** | Create a test plan with cases, configurations, and assignment |
 | **update_test_plan** | Update test plan metadata, status, or assignment |
-| **list_suites** | List all test suites in a project |
+| **list_suites** | List all test suites in a project (supports `title`, `parent`, and `description` filters) |
 | **get_suite** | Get suite details |
 | **create_suite** | Create a new suite |
 | **update_suite** | Update a suite |

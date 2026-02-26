@@ -20,6 +20,26 @@ export const listSuitesSchema = z.object({
     .number()
     .optional()
     .describe("Project ID (optional if TC_DEFAULT_PROJECT is set)"),
+  title: z
+    .string()
+    .optional()
+    .describe("Filter suites whose title contains this string"),
+  title_contains: z
+    .string()
+    .optional()
+    .describe("Alias of title (contains match)"),
+  parent: z
+    .number()
+    .optional()
+    .describe("Filter suites by parent suite ID"),
+  description: z
+    .string()
+    .optional()
+    .describe("Filter suites whose description contains this string"),
+  description_contains: z
+    .string()
+    .optional()
+    .describe("Alias of description (contains match)"),
 });
 
 // ============================================================================
@@ -33,7 +53,11 @@ Returns the complete suite tree with parent-child relationships.
 
 Each suite node includes: id, title, parent_id, children (nested suites).
 
-Tip: Use this to understand the current suite structure before creating or moving suites.`,
+Optional filter:
+- title: Filter suites by title substring.
+- title_contains: Filter suites by title substring (applied at API level).
+- parent: Filter suites by parent suite ID.
+- description: Filter suites by description substring.`,
 };
 
 // ============================================================================
@@ -42,6 +66,11 @@ Tip: Use this to understand the current suite structure before creating or movin
 
 export async function handleListSuites(args: {
   project_id?: number;
+  title?: string;
+  title_contains?: string;
+  parent?: number;
+  description?: string;
+  description_contains?: string;
 }): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   try {
     const projectId = resolveProjectId(args.project_id);
@@ -63,7 +92,27 @@ export async function handleListSuites(args: {
     }
 
     const client = getApiClient();
-    const suitesList = await client.listSuites(projectId);
+    const title = args.title?.trim() || args.title_contains?.trim();
+    const description =
+      args.description?.trim() || args.description_contains?.trim();
+    const filter: Record<string, number | string> = {};
+    if (title) {
+      filter.title = title;
+    }
+    if (description) {
+      filter.description = description;
+    }
+    if (args.parent !== undefined) {
+      filter.parent = args.parent;
+    }
+    const suitesList = await client.listSuites(
+      projectId,
+      Object.keys(filter).length
+        ? {
+            filter,
+          }
+        : undefined
+    );
     const tree = buildSuiteTree(Array.isArray(suitesList) ? suitesList : []);
 
     // Count total suites

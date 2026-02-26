@@ -606,11 +606,19 @@ export class TestCollabApiClient {
   }
 
   /**
-   * List suites for a project using SDK
+   * List suites for a project using SDK.
    */
-  async listSuites(projectId: number) {
+  async listSuites(
+    projectId: number,
+    options?: {
+      filter?: Record<string, unknown>;
+    }
+  ) {
     return this.suitesApi.getAllSuites({
       project: projectId,
+      ...(options?.filter && Object.keys(options.filter).length > 0
+        ? { filter: JSON.stringify(options.filter) }
+        : {}),
     });
   }
 

@@ -37,7 +37,7 @@ claude mcp add testcollab \
 ### Suites
 | Tool | Description |
 |------|-------------|
-| `list_suites` | List all test suites in a project |
+| `list_suites` | List all test suites in a project (supports `title`, `parent`, and `description` filters) |
 | `get_suite` | Get suite details |
 | `create_suite` | Create a new suite |
 | `update_suite` | Update a suite |
