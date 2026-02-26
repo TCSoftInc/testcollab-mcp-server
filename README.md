@@ -15,14 +15,51 @@ Log in to TestCollab → **My Profile Settings** → **API Token** tab → **Gen
 **Claude Code**
 
 ```bash
-claude mcp add testcollab \
-  -e TC_API_TOKEN=your-api-token \
-  -e TC_API_URL=https://api.testcollab.io \
-  -e TC_DEFAULT_PROJECT=16 \
-  -- npx -y @testcollab/mcp-server
+# Required: API token from TestCollab user profile
+TC_API_TOKEN=your-api-token-here
+
+# Optional: API base URL (default: http://localhost:1337)
+TC_API_URL=http://localhost:1337
+
+# Optional: Default project ID (eliminates need to specify project_id in every request)
+TC_DEFAULT_PROJECT=16
 ```
 
-**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TC_API_TOKEN` | Yes | API token from TestCollab user profile |
+| `TC_API_URL` | No | API base URL (default: `http://localhost:1337`) |
+| `TC_DEFAULT_PROJECT` | No | Default project ID - if set, `project_id` becomes optional in tool calls |
+
+Note: For HTTP transport (recommended for multi-client), send credentials per client via headers
+(`X-TC-API-Token`, `X-TC-API-URL`, `X-TC-Default-Project`). Env vars are a global fallback only.
+
+## Usage
+
+### HTTP (recommended for multi-client)
+
+Start the HTTP server:
+
+```bash
+npm start
+```
+
+Configure any MCP client with a URL and headers. Example (Codex):
+
+```toml
+[mcp_servers.testcollab]
+url = "http://localhost:3100/mcp"
+http_headers = { "X-TC-Default-Project" = "17", X-TC-API-Token = "", X-TC-API-URL = "http://localhost:1337" }
+
+# (optional) for high security - use env var
+#env_http_headers = { "X-TC-Token" = "TESTCOLLAB_MCP_TOKEN" }
+```
+
+### Stdio (single-client)
+
+### With Claude Desktop
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -58,8 +95,33 @@ claude mcp add testcollab \
 }
 ```
 
-**Windsurf** — add to `~/.codeium/windsurf/mcp_config.json`:
+### Manual Testing
 
+```bash
+# Start the HTTP server (recommended)
+npm start
+
+# Start the stdio server (single-client)
+TC_API_TOKEN=your-token npm run start:stdio
+```
+
+## Available Tools
+
+### list_test_cases
+
+List test cases from a project with optional filtering.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
+| `suite` | number\|string | No | Filter by suite ID or title |
+| `filter` | object | No | Filter conditions |
+| `sort` | array | No | Sort specification |
+| `limit` | number | No | Max results (1-100, default: 50) |
+| `offset` | number | No | Skip N results (default: 0) |
+
+**Filter Example:**
 ```json
 {
   "mcpServers": {
