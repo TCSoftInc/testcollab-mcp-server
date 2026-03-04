@@ -2,8 +2,6 @@
 
 Connect your AI coding assistant to [TestCollab](https://testcollab.com) — manage test cases, test plans, and suites directly from Claude, Cursor, Windsurf, Codex, or any MCP-compatible client.
 
-> **Note:** The HTTP transport mode (`http-server.js`) is deprecated. Use the stdio transport via `npx` as shown below.
-
 ## Quick Start
 
 ### 1. Get your API token
@@ -31,12 +29,7 @@ TC_DEFAULT_PROJECT=16
 | `TC_API_URL` | No | API base URL (default: `http://localhost:1337`) |
 | `TC_DEFAULT_PROJECT` | No | Default project ID - if set, `project_id` becomes optional in tool calls |
 
-Note: For HTTP transport (recommended for multi-client), send credentials per client via headers
-(`X-TC-API-Token`, `X-TC-API-URL`, `X-TC-Default-Project`). Env vars are a global fallback only.
-
 ## Usage
-
-### Stdio (single-client)
 
 ### With Claude Desktop
 
@@ -79,11 +72,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 ### Manual Testing
 
 ```bash
-# Start the HTTP server (recommended)
-npm start
-
-# Start the stdio server (single-client)
-TC_API_TOKEN=your-token npm run start:stdio
+TC_API_TOKEN=your-token npm start
 ```
 
 ## Available Tools
@@ -229,4 +218,4 @@ npm run lint         # Lint
 
 ## License
 
-UNLICENSED — Private
+MIT

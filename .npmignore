@@ -1,0 +1,14 @@
+src
+tests
+tsconfig.json
+vitest.config.*
+.eslintrc.*
+eslint.config.*
+nodemon.json
+.env
+.env.*
+.github
+scripts
+DEV_NOTES.md
+CLAUDE.md
+AGENTS.md

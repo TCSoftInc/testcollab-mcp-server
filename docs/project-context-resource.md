@@ -133,8 +133,7 @@ The server only **registers** the resource. It does **not** auto-fetch it during
 |------|-------------|
 | `src/resources/project-context.ts` | Resource handler, accepts project ID, returns context JSON |
 | `src/resources/index.ts` | Registers the resource with the MCP server |
-| `src/server.ts` | Updated to call `registerResources()` (stdio transport) |
-| `src/http-server.ts` | Updated to call `registerResources()` (HTTP transport) |
+| `src/server.ts` | Updated to call `registerResources()` |
 
 ## Caching
 

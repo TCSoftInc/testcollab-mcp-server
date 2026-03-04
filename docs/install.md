@@ -14,7 +14,7 @@ npm install
 npm run build
 ```
 
-This creates the compiled server in `dist/index.js` (stdio) and `dist/http-server.js` (HTTP).
+This creates the compiled server in `dist/index.js`.
 
 ## Step 2: Get Your API Token
 
@@ -90,22 +90,6 @@ For production TestCollab:
 }
 ```
 
-### Multi-client / Production (HTTP transport)
-
-Run the HTTP server and configure your MCP client to connect via URL + headers:
-
-```bash
-npm start
-```
-
-Example (Codex):
-
-```toml
-[mcp_servers.testcollab]
-url = "http://localhost:3100/mcp"
-http_headers = { "X-TC-Default-Project" = "123", "X-TC-API-Token" = "your-production-token", "X-TC-API-URL" = "https://api.testcollab.io" }
-```
-
 ## Step 4: Restart Claude Code
 
 After saving the settings file, restart Claude Code for the MCP server to be loaded.
@@ -141,7 +125,7 @@ Try these example prompts:
 
 1. Check that the path in `args` is correct and absolute
 2. Verify the server builds without errors: `npm run build`
-3. Test manually (stdio): `TC_API_TOKEN=your-token npm run start:stdio`
+3. Test manually: `TC_API_TOKEN=your-token npm start`
 
 ### Authentication errors
 
