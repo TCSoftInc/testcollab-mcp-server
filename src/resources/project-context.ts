@@ -1,7 +1,7 @@
 /**
  * project_context MCP Resource
  *
- * Provides project metadata (suite tree, custom fields, tags, etc.)
+ * Provides project metadata (suite tree, custom fields, tags, users, etc.)
  * so the AI can resolve human-readable names to numeric IDs.
  */
 
@@ -37,12 +37,32 @@ type RequirementNode = {
   requirement_id?: string;
 };
 
+type TestPlanFolderNode = {
+  id: number;
+  title: string;
+  parent_id: number | null;
+};
+
+type ProjectUserNode = {
+  id: number;
+  name: string;
+  email?: string;
+  username?: string;
+  role?: string;
+};
+
 type ProjectContextPayload = {
   project_id: number;
+  project_name?: string;
+  project_description?: string;
+  app_type?: string;
+  app_type_other?: string;
   suites: SuiteNode[];
   tags: TagNode[];
   custom_fields: CustomFieldNode[];
   requirements: RequirementNode[];
+  test_plan_folders: TestPlanFolderNode[];
+  users: ProjectUserNode[];
 };
 
 type CacheEntry = {
@@ -86,6 +106,14 @@ const toNumberId = (value: unknown): number | undefined => {
     }
   }
   return undefined;
+};
+
+const normalizeString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 };
 
 const getCompanyIdFromProject = (project: unknown): number | undefined => {
@@ -196,6 +224,99 @@ const mapRequirements = (requirements: unknown[]): RequirementNode[] =>
       };
     })
     .filter((req): req is RequirementNode => Boolean(req));
+
+const mapTestPlanFolders = (folders: unknown[]): TestPlanFolderNode[] => {
+  const deduped = new Map<number, TestPlanFolderNode>();
+
+  folders.forEach((folder) => {
+    const id = toNumberId(getField(folder, "id"));
+    const title =
+      normalizeString(getField<string>(folder, "title")) ??
+      normalizeString(getField<string>(folder, "name"));
+
+    if (!id || !title) {
+      return;
+    }
+
+    const parentId =
+      toNumberId(getField(folder, "parent_id")) ??
+      toNumberId(getField(folder, "parentId"));
+
+    deduped.set(id, {
+      id,
+      title,
+      parent_id: parentId ?? null,
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
+
+const mapProjectUsers = (projectUsers: unknown[]): ProjectUserNode[] => {
+  const deduped = new Map<number, ProjectUserNode>();
+
+  projectUsers.forEach((projectUser) => {
+    const rawUser = getField<unknown>(projectUser, "user");
+    const userObject =
+      rawUser && typeof rawUser === "object"
+        ? (rawUser as Record<string, unknown>)
+        : undefined;
+
+    const id =
+      (userObject ? toNumberId(getField(userObject, "id")) : undefined) ??
+      toNumberId(rawUser) ??
+      toNumberId(getField(projectUser, "user_id")) ??
+      toNumberId(getField(projectUser, "userId"));
+
+    if (!id) {
+      return;
+    }
+
+    const roleRaw = getField(projectUser, "role");
+    const roleObject =
+      roleRaw && typeof roleRaw === "object"
+        ? (roleRaw as Record<string, unknown>)
+        : undefined;
+
+    const name =
+      (userObject ? normalizeString(getField(userObject, "name")) : undefined) ??
+      normalizeString(getField(projectUser, "name")) ??
+      `User ${id}`;
+    const email = userObject
+      ? normalizeString(getField(userObject, "email"))
+      : undefined;
+    const username = userObject
+      ? normalizeString(getField(userObject, "username"))
+      : undefined;
+    const role =
+      (roleObject
+        ? normalizeString(getField(roleObject, "name")) ??
+          normalizeString(getField(roleObject, "title"))
+        : undefined) ?? normalizeString(roleRaw);
+
+    deduped.set(id, {
+      id,
+      name,
+      ...(email ? { email } : {}),
+      ...(username ? { username } : {}),
+      ...(role ? { role } : {}),
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byName = a.name.localeCompare(b.name);
+    if (byName !== 0) {
+      return byName;
+    }
+    return a.id - b.id;
+  });
+};
 
 const mapCustomFields = (customFields: unknown[]): CustomFieldNode[] =>
   customFields
@@ -349,6 +470,10 @@ export async function handleProjectContext(
     const client = getApiClient();
 
     let companyId: number | undefined;
+    let projectName: string | undefined;
+    let projectDescription: string | undefined;
+    let appType: string | undefined;
+    let appTypeOther: string | undefined;
     try {
       console.log(
         `${apiLogPrefix} GET /projects/{id} params: ${JSON.stringify({
@@ -357,6 +482,10 @@ export async function handleProjectContext(
       );
       const project = await client.getProject(projectId);
       companyId = getCompanyIdFromProject(project);
+      projectName = normalizeString(getField<string>(project, "name"));
+      projectDescription = normalizeString(getField<string>(project, "description"));
+      appType = normalizeString(getField<string>(project, "app_type"));
+      appTypeOther = normalizeString(getField<string>(project, "app_type_other"));
     } catch (error) {
       console.warn(
         `${logPrefix} Failed to fetch project ${projectId} for company ID`,
@@ -388,14 +517,44 @@ export async function handleProjectContext(
         entity: "TestCase",
       })}`
     );
+    console.log(
+      `${apiLogPrefix} GET /testplanfolders params: ${JSON.stringify({
+        projectId,
+      })}`
+    );
+    console.log(
+      `${apiLogPrefix} GET /projectusers params: ${JSON.stringify({
+        projectId,
+      })}`
+    );
 
-    const [suitesList, tagsList, requirementsList, customFieldsList] =
-      await Promise.all([
-        client.listSuites(projectId),
-        client.listTags(projectId),
-        client.listRequirements(projectId),
-        client.listProjectCustomFields(projectId, companyId),
-      ]);
+    const [
+      suitesList,
+      tagsList,
+      requirementsList,
+      customFieldsList,
+      testPlanFoldersList,
+      projectUsersList,
+    ] = await Promise.all([
+      client.listSuites(projectId),
+      client.listTags(projectId),
+      client.listRequirements(projectId),
+      client.listProjectCustomFields(projectId, companyId),
+      client.listTestPlanFolders(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch test plan folders for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+      client.listProjectUsers(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch project users for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+    ]);
 
     const suites = buildSuiteTree(Array.isArray(suitesList) ? suitesList : []);
     const tags = mapTags(Array.isArray(tagsList) ? tagsList : []);
@@ -405,13 +564,25 @@ export async function handleProjectContext(
     const custom_fields = mapCustomFields(
       Array.isArray(customFieldsList) ? customFieldsList : []
     );
+    const test_plan_folders = mapTestPlanFolders(
+      Array.isArray(testPlanFoldersList) ? testPlanFoldersList : []
+    );
+    const users = mapProjectUsers(
+      Array.isArray(projectUsersList) ? projectUsersList : []
+    );
 
     const payload: ProjectContextPayload = {
       project_id: projectId,
+      ...(projectName ? { project_name: projectName } : {}),
+      ...(projectDescription ? { project_description: projectDescription } : {}),
+      ...(appType ? { app_type: appType } : {}),
+      ...(appType === "other" && appTypeOther ? { app_type_other: appTypeOther } : {}),
       suites,
       tags,
       custom_fields,
       requirements,
+      test_plan_folders,
+      users,
     };
 
     if (cacheKey) {
@@ -423,7 +594,7 @@ export async function handleProjectContext(
 
     const durationMs = Date.now() - startTime;
     console.log(
-      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length})`
+      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, users: ${users.length})`
     );
 
     return {

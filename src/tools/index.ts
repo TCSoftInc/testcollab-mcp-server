@@ -14,6 +14,46 @@ import {
   getTestCaseSchema,
   handleGetTestCase,
 } from "./test-cases/index.js";
+import {
+  getTestPlanTool,
+  getTestPlanRegistrationSchema,
+  handleGetTestPlan,
+  createTestPlanTool,
+  createTestPlanSchema,
+  handleCreateTestPlan,
+  listTestPlansTool,
+  listTestPlansSchema,
+  handleListTestPlans,
+  updateTestPlanTool,
+  updateTestPlanSchema,
+  handleUpdateTestPlan,
+  deleteTestPlanTool,
+  deleteTestPlanSchema,
+  handleDeleteTestPlan,
+} from "./test-plans/index.js";
+import {
+  createSuiteTool,
+  createSuiteSchema,
+  handleCreateSuite,
+  listSuitesTool,
+  listSuitesSchema,
+  handleListSuites,
+  getSuiteTool,
+  getSuiteSchema,
+  handleGetSuite,
+  updateSuiteTool,
+  updateSuiteSchema,
+  handleUpdateSuite,
+  deleteSuiteTool,
+  deleteSuiteSchema,
+  handleDeleteSuite,
+  moveSuiteTool,
+  moveSuiteSchema,
+  handleMoveSuite,
+  reorderSuitesTool,
+  reorderSuitesSchema,
+  handleReorderSuites,
+} from "./suites/index.js";
 import { handleProjectContext, resolveProjectId } from "../resources/project-context.js";
 
 // ============================================================================
@@ -105,8 +145,9 @@ export function registerTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   server.tool(
     "get_project_context",
-    `Get project context including suite tree, tags, custom fields, and requirements.
-Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names) to numeric IDs used by other tools.
+    `Get project context including project name, description, application type, suite tree, tags, custom fields, requirements, test plan folders, and project users.
+Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names, folder titles, user names) to numeric IDs used by other tools.
+Also returns the project description and app_type (web_app, mobile_app, api, desktop_app, other) which should inform the style of test steps you generate.
 
 IMPORTANT: Call this tool at the start of every conversation before using any other TestCollab tool.
 This avoids errors from unresolved suite names, tag names, or custom field references.`,
@@ -255,6 +296,66 @@ Example:
   );
 
   // -------------------------------------------------------------------------
+  // get_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    getTestPlanTool.name,
+    getTestPlanTool.description,
+    getTestPlanRegistrationSchema.shape,
+    async (args) => {
+      return handleGetTestPlan(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // list_test_plans
+  // -------------------------------------------------------------------------
+  server.tool(
+    listTestPlansTool.name,
+    listTestPlansTool.description,
+    listTestPlansSchema.shape,
+    async (args) => {
+      return handleListTestPlans(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // create_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    createTestPlanTool.name,
+    createTestPlanTool.description,
+    createTestPlanSchema.shape,
+    async (args) => {
+      return handleCreateTestPlan(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // update_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    updateTestPlanTool.name,
+    updateTestPlanTool.description,
+    updateTestPlanSchema.shape,
+    async (args) => {
+      return handleUpdateTestPlan(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // delete_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    deleteTestPlanTool.name,
+    deleteTestPlanTool.description,
+    deleteTestPlanSchema.shape,
+    async (args) => {
+      return handleDeleteTestPlan(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // update_test_case
   // -------------------------------------------------------------------------
   server.tool(
@@ -344,7 +445,87 @@ Example - patch a single step:
     }
   );
 
-  // Future tools will be registered here:
-  // server.tool("delete_test_case", ...);
-  // server.tool("list_suites", ...);
+  // -------------------------------------------------------------------------
+  // create_suite
+  // -------------------------------------------------------------------------
+  server.tool(
+    createSuiteTool.name,
+    createSuiteTool.description,
+    createSuiteSchema.shape,
+    async (args) => {
+      return handleCreateSuite(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // list_suites
+  // -------------------------------------------------------------------------
+  server.tool(
+    listSuitesTool.name,
+    listSuitesTool.description,
+    listSuitesSchema.shape,
+    async (args) => {
+      return handleListSuites(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // get_suite
+  // -------------------------------------------------------------------------
+  server.tool(
+    getSuiteTool.name,
+    getSuiteTool.description,
+    getSuiteSchema.shape,
+    async (args) => {
+      return handleGetSuite(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // update_suite
+  // -------------------------------------------------------------------------
+  server.tool(
+    updateSuiteTool.name,
+    updateSuiteTool.description,
+    updateSuiteSchema.shape,
+    async (args) => {
+      return handleUpdateSuite(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // delete_suite
+  // -------------------------------------------------------------------------
+  server.tool(
+    deleteSuiteTool.name,
+    deleteSuiteTool.description,
+    deleteSuiteSchema.shape,
+    async (args) => {
+      return handleDeleteSuite(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // move_suite
+  // -------------------------------------------------------------------------
+  server.tool(
+    moveSuiteTool.name,
+    moveSuiteTool.description,
+    moveSuiteSchema.shape,
+    async (args) => {
+      return handleMoveSuite(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // reorder_suites
+  // -------------------------------------------------------------------------
+  server.tool(
+    reorderSuitesTool.name,
+    reorderSuitesTool.description,
+    reorderSuitesSchema.shape,
+    async (args) => {
+      return handleReorderSuites(args);
+    }
+  );
 }

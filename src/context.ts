@@ -37,28 +37,26 @@ export function getRequestContext(): RequestContext | undefined {
 }
 
 /**
- * Parse request context from HTTP headers, with env var fallback
+ * Parse request context from HTTP headers.
+ * Tokens must always come from headers — never fall back to env vars.
+ * Only apiUrl and defaultProject fall back to env vars for convenience.
  */
 export function parseContextFromHeaders(headers: Record<string, string | string[] | undefined>): RequestContext | null {
-  // Try headers first
-  let apiToken = headers["x-tc-api-token"];
+  const apiToken = headers["x-tc-api-token"];
   let apiUrl = headers["x-tc-api-url"];
   let defaultProject = headers["x-tc-default-project"];
 
-  // Fall back to env vars if headers not provided
+  // Token is required from headers — no env var fallback
   if (!apiToken || typeof apiToken !== "string") {
-    apiToken = process.env["TC_API_TOKEN"];
+    return null;
   }
+
+  // apiUrl and defaultProject can fall back to env vars
   if (!apiUrl || typeof apiUrl !== "string") {
     apiUrl = process.env["TC_API_URL"] || "http://localhost:1337";
   }
   if (!defaultProject || typeof defaultProject !== "string") {
     defaultProject = process.env["TC_DEFAULT_PROJECT"];
-  }
-
-  // Token is required (from either headers or env)
-  if (!apiToken || typeof apiToken !== "string") {
-    return null;
   }
 
   const context: RequestContext = {

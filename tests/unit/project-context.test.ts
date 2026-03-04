@@ -79,6 +79,24 @@ describe("project context resource", () => {
         },
       },
     ]);
+    const listTestPlanFolders = vi.fn().mockResolvedValue([
+      { id: 42, title: "Mobile", parent_id: null },
+    ]);
+    const listProjectUsers = vi.fn().mockResolvedValue([
+      {
+        id: 1000,
+        user: {
+          id: 27,
+          name: "Jane Doe",
+          email: "jane@example.com",
+          username: "jane",
+        },
+        role: {
+          id: 2,
+          name: "Tester",
+        },
+      },
+    ]);
     const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
 
     vi.mocked(getApiClient).mockReturnValue({
@@ -86,6 +104,8 @@ describe("project context resource", () => {
       listTags,
       listRequirements,
       listProjectCustomFields,
+      listTestPlanFolders,
+      listProjectUsers,
       getProject,
     } as unknown as ReturnType<typeof getApiClient>);
 
@@ -109,6 +129,22 @@ describe("project context resource", () => {
       field_type: "dropdown",
       options: ["Chrome", "Firefox"],
     });
+    expect(payload.test_plan_folders).toEqual([
+      {
+        id: 42,
+        title: "Mobile",
+        parent_id: null,
+      },
+    ]);
+    expect(payload.users).toEqual([
+      {
+        id: 27,
+        name: "Jane Doe",
+        email: "jane@example.com",
+        username: "jane",
+        role: "Tester",
+      },
+    ]);
 
     await handleProjectContext(42);
 
@@ -116,5 +152,7 @@ describe("project context resource", () => {
     expect(listTags).toHaveBeenCalledTimes(1);
     expect(listRequirements).toHaveBeenCalledTimes(1);
     expect(listProjectCustomFields).toHaveBeenCalledTimes(1);
+    expect(listTestPlanFolders).toHaveBeenCalledTimes(1);
+    expect(listProjectUsers).toHaveBeenCalledTimes(1);
   });
 });

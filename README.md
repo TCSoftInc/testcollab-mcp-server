@@ -1,33 +1,18 @@
 # TestCollab MCP Server
 
-MCP (Model Context Protocol) server that exposes TestCollab test management functionality to AI assistants like Claude.
+Connect your AI coding assistant to [TestCollab](https://testcollab.com) — manage test cases, test plans, and suites directly from Claude, Cursor, Windsurf, Codex, or any MCP-compatible client.
 
-## Features
+> **Note:** The HTTP transport mode (`http-server.js`) is deprecated. Use the stdio transport via `npx` as shown below.
 
-### V1.0 (Current)
-- **Test Case Management**
-  - `list_test_cases` - List test cases with filtering, sorting, and pagination
-  - `get_test_case` - Fetch a single test case with full details (including steps)
-  - `create_test_case` - Create test cases with steps and custom fields
-  - `update_test_case` - Update existing test cases
+## Quick Start
 
-### Planned
-- Delete test cases
-- Suite management
-- Test plan management
-- Test execution recording
+### 1. Get your API token
 
-## Installation
+Log in to TestCollab → **My Profile Settings** → **API Token** tab → **Generate new API token**.
 
-```bash
-cd tc-mcp-server
-npm install
-npm run build
-```
+### 2. Add the server to your MCP client
 
-## Configuration
-
-Create a `.env` file or set environment variables:
+**Claude Code**
 
 ```bash
 # Required: API token from TestCollab user profile
@@ -80,11 +65,11 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 {
   "mcpServers": {
     "testcollab": {
-      "command": "node",
-      "args": ["/path/to/tc-mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@testcollab/mcp-server"],
       "env": {
-        "TC_API_URL": "http://localhost:1337",
         "TC_API_TOKEN": "your-api-token",
+        "TC_API_URL": "https://api.testcollab.io",
         "TC_DEFAULT_PROJECT": "16"
       }
     }
@@ -92,19 +77,17 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-### With Claude Code
-
-Add to your Claude Code settings (`.claude/settings.json`):
+**Cursor** — add to `.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "testcollab": {
-      "command": "node",
-      "args": ["./tc-mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@testcollab/mcp-server"],
       "env": {
-        "TC_API_URL": "http://localhost:1337",
         "TC_API_TOKEN": "your-api-token",
+        "TC_API_URL": "https://api.testcollab.io",
         "TC_DEFAULT_PROJECT": "16"
       }
     }
@@ -141,223 +124,128 @@ List test cases from a project with optional filtering.
 **Filter Example:**
 ```json
 {
-  "project_id": 1,
-  "filter": {
-    "priority": {
-      "filterType": "number",
-      "type": "greaterThanOrEqual",
-      "filter": 1
-    },
-    "title": {
-      "filterType": "text",
-      "type": "contains",
-      "filter": "login"
+  "mcpServers": {
+    "testcollab": {
+      "command": "npx",
+      "args": ["-y", "@testcollab/mcp-server"],
+      "env": {
+        "TC_API_TOKEN": "your-api-token",
+        "TC_API_URL": "https://api.testcollab.io",
+        "TC_DEFAULT_PROJECT": "16"
+      }
     }
-  },
-  "sort": [{ "colId": "updated_at", "sort": "desc" }],
-  "limit": 25
-}
-```
-
-**Response:**
-```json
-{
-  "rows": [...],
-  "totalCount": 150,
-  "filteredCount": 25
-}
-```
-
-### get_test_case
-
-Fetch a single test case with full details (including steps).
-
-**Parameters:**
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `id` | number | Yes | Test case ID |
-| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
-| `parse_reusable_steps` | boolean | No | Parse reusable steps into full steps (default: true) |
-
-**Example:**
-```json
-{
-  "id": 1835,
-  "parse_reusable_steps": true
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "testCase": {
-    "id": 1835,
-    "title": "login check",
-    "priority": 1,
-    "steps": [
-      { "step_number": 1, "step": "Navigate to login", "expected_result": "Login page loads" },
-      { "step_number": 2, "step": "Enter credentials", "expected_result": null }
-    ]
-  },
-  "stepsMissingExpectedResults": [2]
-}
-```
-
-### create_test_case
-
-Create a new test case with optional custom fields.
-
-**Parameters:**
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
-| `title` | string | Yes | Test case title |
-| `suite` | number\|string | No | Suite ID or title to place test case in |
-| `description` | string | No | HTML-formatted description |
-| `priority` | number | No | 0=Low, 1=Normal, 2=High (default: 1) |
-| `steps` | array | No | Test steps array |
-| `tags` | array | No | Array of tag IDs |
-| `requirements` | array | No | Array of requirement IDs |
-| `custom_fields` | array | No | Array of custom field values |
-| `attachments` | array | No | Array of attachment file IDs |
-
-**Example:**
-```json
-{
-  "title": "Verify login with valid credentials",
-  "suite": 123,
-  "priority": 2,
-  "description": "<p>Test user login</p>",
-  "steps": [
-    { "step": "Navigate to login page", "expected_result": "Page loads" },
-    { "step": "Enter valid credentials", "expected_result": "Fields accept input" },
-    { "step": "Click Login", "expected_result": "User logged in" }
-  ],
-  "custom_fields": [
-    { "id": 5, "name": "env_dropdown", "value": 1, "valueLabel": "staging" }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Test case created successfully",
-  "testCase": {
-    "id": 1234,
-    "title": "Verify login with valid credentials",
-    "project": { "id": 16, "name": "My Project" },
-    "suite": { "id": 123, "title": "Login Suite" },
-    "priority": "2"
   }
 }
 ```
 
-### update_test_case
+### 3. Verify
 
-Update an existing test case.
+Restart your client, then ask: *"What tools do you have for TestCollab?"*
 
-**Parameters:**
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `id` | number | Yes | Test case ID to update |
-| `project_id` | number | No* | Project ID (*required if `TC_DEFAULT_PROJECT` not set) |
-| `title` | string | No | New title |
-| `suite` | number\|string | No | Move to different suite by ID or title |
-| `description` | string | No | HTML-formatted description |
-| `priority` | number | No | 0=Low, 1=Normal, 2=High |
-| `steps` | array | No | Replace all steps |
-| `tags` | array | No | Replace all tags (array of tag IDs) |
-| `requirements` | array | No | Replace all requirements (array of requirement IDs) |
-| `custom_fields` | array | No | Update custom field values |
-| `attachments` | array | No | Replace attachments (array of file IDs) |
+You should see the TestCollab tools listed. Try: *"Show me all test cases"*.
 
-**Example:**
-```json
-{
-  "id": 1234,
-  "title": "Updated: Verify login with valid credentials",
-  "priority": 2,
-  "steps": [
-    { "step": "Navigate to login page", "expected_result": "Page loads" },
-    { "step": "Enter valid credentials", "expected_result": "Fields accept input" },
-    { "step": "Click Login", "expected_result": "User logged in" },
-    { "step": "Verify dashboard", "expected_result": "Dashboard displayed" }
-  ]
-}
+## Configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TC_API_TOKEN` | Yes | — | API token from your TestCollab profile |
+| `TC_API_URL` | No | `https://api.testcollab.io` | TestCollab API base URL |
+| `TC_DEFAULT_PROJECT` | No | — | Default project ID (makes `project_id` optional in every tool call) |
+
+> **EU region:** If your TestCollab account is hosted in the EU, use `https://api-eu.testcollab.io` as your `TC_API_URL`.
+
+## What You Can Do
+
+| Tool | Description |
+|------|-------------|
+| **get_project_context** | Get suites, tags, custom fields, requirements, users — call this first |
+| **list_test_cases** | Query test cases with filtering, sorting, and pagination |
+| **get_test_case** | Fetch a test case with full step details |
+| **create_test_case** | Create a test case with steps, tags, custom fields |
+| **update_test_case** | Update any test case field |
+| **list_test_plans** | List test plans with filtering and sorting |
+| **get_test_plan** | Fetch one test plan with included test cases count, configurations, runs, and current progress status |
+| **create_test_plan** | Create a test plan with cases, configurations, and assignment |
+| **update_test_plan** | Update test plan metadata, status, or assignment |
+| **delete_test_plan** | Delete a test plan |
+| **list_suites** | List all test suites in a project (supports `title`, `parent`, and `description` filters) |
+| **get_suite** | Get suite details |
+| **create_suite** | Create a new suite |
+| **update_suite** | Update a suite |
+| **delete_suite** | Delete a suite |
+| **move_suite** | Move a suite to a different parent |
+| **reorder_suites** | Reorder suites within a parent |
+
+## Example Prompts
+
+```
+"Show me all high-priority test cases in the Login suite"
+
+"Create a test case for verifying password reset with 5 steps"
+
+"List all test plans created this week"
+
+"Create a regression test plan with all test cases tagged 'smoke'"
+
+"Move the Payment suite under the Checkout suite"
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Test case updated successfully",
-  "testCase": {
-    "id": 1234,
-    "title": "Updated: Verify login with valid credentials",
-    "project": { "id": 16, "name": "My Project" },
-    "suite": { "id": 123, "title": "Login Suite" },
-    "priority": "2"
-  }
-}
-```
+See [Use Cases](docs/use_cases.md) for detailed workflows.
 
-## Development
+## Local Development Setup
+
+If you're contributing or want to run from source instead of npx:
 
 ```bash
-# Install dependencies
+git clone <repo-url>
+cd tc-mcp-server
 npm install
-
-# Run in development mode (with hot reload)
-npm run dev
-
-# Build
 npm run build
-
-# Run tests
-npm test
-
-# Type check
-npm run typecheck
-
-# Lint
-npm run lint
 ```
 
-## Project Structure
+Then point your MCP client to the built file:
 
-```
-tc-mcp-server/
-├── src/
-│   ├── index.ts          # Entry point
-│   ├── server.ts         # MCP server setup
-│   ├── config.ts         # Configuration
-│   ├── client/
-│   │   └── api-client.ts # TestCollab API client
-│   ├── tools/
-│   │   ├── index.ts      # Tool registry
-│   │   ├── test-cases/
-│   │   │   ├── index.ts
-│   │   │   └── list.ts   # list_test_cases tool
-│   │   └── suites/
-│   │       └── index.ts
-│   └── types/
-│       └── index.ts      # Type definitions
-├── tests/
-│   ├── unit/
-│   └── integration/
-├── package.json
-├── tsconfig.json
-└── README.md
+```json
+{
+  "mcpServers": {
+    "testcollab": {
+      "command": "node",
+      "args": ["/path/to/tc-mcp-server/dist/index.js"],
+      "env": {
+        "TC_API_TOKEN": "your-api-token",
+        "TC_API_URL": "http://localhost:1337",
+        "TC_DEFAULT_PROJECT": "16"
+      }
+    }
+  }
+}
 ```
 
-## Documentation
+### Dev Commands
 
-- [Installation Guide](docs/install.md) - Step-by-step setup for Claude Code and Claude Desktop
-- [Use Cases](docs/use_cases.md) - Common scenarios and example prompts for chatbot integration
+```bash
+npm run dev          # Watch mode with hot reload
+npm run build        # Compile TypeScript
+npm test             # Run tests
+npm run typecheck    # Type check
+npm run lint         # Lint
+```
+
+## Troubleshooting
+
+**Server not appearing in your client**
+- Restart the client after adding the config
+- Verify Node.js 20+ is installed: `node --version`
+- Test manually: `TC_API_TOKEN=your-token npx @testcollab/mcp-server`
+
+**Authentication errors**
+- Verify your API token is valid and not expired
+- Check that `TC_API_URL` points to the correct server
+
+**"project_id is required" error**
+- Set `TC_DEFAULT_PROJECT` in your env config, or
+- Specify the project in your prompt: *"Show me test cases in project 16"*
 
 ## License
 
-UNLICENSED - Private
+UNLICENSED — Private

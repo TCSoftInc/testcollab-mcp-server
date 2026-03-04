@@ -34,7 +34,7 @@ export function loadConfig(): Config {
   const defaultProjectId = defaultProjectStr ? parseInt(defaultProjectStr, 10) : undefined;
 
   return {
-    apiBaseUrl: getEnvOrDefault("TC_API_URL", "http://localhost:1337"),
+    apiBaseUrl: getEnvOrDefault("TC_API_URL", "https://api.testcollab.io"),
     apiToken: getEnvOrThrow("TC_API_TOKEN"),
     serverName: "testcollab",
     serverVersion: "1.0.0",

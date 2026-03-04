@@ -4,7 +4,7 @@
 
 When users say things like "list test cases in suite Login" to the MCP server, the AI has no way to resolve the suite name "Login" to its numeric ID. The `list_test_cases` tool accepts `suite` (ID or title), so the AI either fails or has to ask the user for the ID - defeating the purpose of natural language interaction.
 
-The same problem applies to tags, custom fields, and any other entity referenced by name but stored by numeric ID.
+The same problem applies to tags, custom fields, project users, and any other entity referenced by name but stored by numeric ID.
 
 ## Solution
 
@@ -19,7 +19,7 @@ The server only **registers** the resource. It does **not** auto-fetch it during
 - If you don’t see project-context queries, it means the client never read the resource.
 
 **How to verify:**
-- When the resource is read, the server logs `Building project context for {project_id}` and the API calls for suites/tags/requirements/custom fields.
+- When the resource is read, the server logs `Building project context for {project_id}` and the API calls for suites/tags/requirements/custom fields/project users.
 - If those logs never appear, the resource was not requested.
 
 ## Runtime Check
@@ -114,6 +114,9 @@ The server only **registers** the resource. It does **not** auto-fetch it during
   ],
   "requirements": [
     { "id": 501, "title": "User can reset password", "requirement_key": "REQ-12", "requirement_id": "12" }
+  ],
+  "users": [
+    { "id": 27, "name": "Jane Doe", "email": "jane@example.com", "username": "jane", "role": "Tester" }
   ]
 }
 ```

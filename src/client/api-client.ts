@@ -7,9 +7,11 @@
 import {
   createConfiguration,
   TestCasesApi,
+  TestPlansApi,
   SuitesApi,
   type Configuration,
   type TestCase as SDKTestCase,
+  type TestPlan as SDKTestPlan,
 } from "@testcollab/sdk";
 import { getConfig } from "../config.js";
 import { getRequestContext } from "../context.js";
@@ -51,6 +53,17 @@ export interface AggridResponse {
   filteredCount: number;
 }
 
+export interface TestCaseSelectorQuery {
+  field: string;
+  operator: string;
+  value: string;
+}
+
+export interface TestCaseSelectorCollection {
+  testCases?: number[];
+  selector?: TestCaseSelectorQuery[];
+}
+
 // ============================================================================
 // API Client Class
 // ============================================================================
@@ -65,6 +78,7 @@ export class TestCollabApiClient {
   private baseUrl: string;
   private token: string;
   private testCasesApi: TestCasesApi;
+  private testPlansApi: TestPlansApi;
   private suitesApi: SuitesApi;
 
   constructor(credentials?: ApiClientCredentials) {
@@ -85,6 +99,7 @@ export class TestCollabApiClient {
 
     // Initialize API instances
     this.testCasesApi = new TestCasesApi(this.config);
+    this.testPlansApi = new TestPlansApi(this.config);
     this.suitesApi = new SuitesApi(this.config);
   }
 
@@ -187,6 +202,29 @@ export class TestCollabApiClient {
   }
 
   /**
+   * List test plans with optional filtering, sorting, and pagination.
+   */
+  async listTestPlans(params: {
+    projectId: number;
+    limit?: number;
+    offset?: number;
+    sort?: string;
+    filter?: Record<string, unknown>;
+  }): Promise<SDKTestPlan[]> {
+    const { projectId, limit = 25, offset = 0, sort, filter } = params;
+
+    return this.testPlansApi.getTestPlans({
+      project: projectId,
+      limit,
+      start: offset,
+      ...(sort ? { sort } : {}),
+      ...(filter && Object.keys(filter).length > 0
+        ? { filter: JSON.stringify(filter) }
+        : {}),
+    });
+  }
+
+  /**
    * Get a single test case by ID using SDK
    */
   async getTestCase(id: number, projectId: number): Promise<SDKTestCase> {
@@ -286,6 +324,328 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Create a new test plan.
+   */
+  async createTestPlan(data: {
+    projectId: number;
+    title: string;
+    description?: string;
+    priority?: number;
+    testPlanFolderId?: number | null;
+    startDate?: string;
+    endDate?: string;
+    customFields?: Array<{
+      id: number;
+      name: string;
+      label?: string;
+      value: string | number | Array<string | number> | null;
+      valueLabel?: string | string[];
+      color?: string;
+    }>;
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+    };
+
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.priority !== undefined) {
+      payload.priority = data.priority;
+    }
+    if (data.testPlanFolderId !== undefined) {
+      payload.test_plan_folder = data.testPlanFolderId;
+    }
+    if (data.startDate !== undefined) {
+      payload.start_date = data.startDate;
+    }
+    if (data.endDate !== undefined) {
+      payload.end_date = data.endDate;
+    }
+    if (data.customFields !== undefined) {
+      payload.custom_fields = data.customFields;
+    }
+
+    return this.rawRequest<Record<string, unknown>>("POST", "/testplans", payload);
+  }
+
+  /**
+   * Get a single test plan by ID using raw API (preserves full payload).
+   */
+  async getTestPlanRaw(id: number): Promise<Record<string, unknown>> {
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/testplans/${encodedId}`
+    );
+  }
+
+  /**
+   * Get count of test cases included in a test plan.
+   */
+  async getTestPlanTestCaseCount(
+    projectId: number,
+    testPlanId: number
+  ): Promise<{ count: number }> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("filter", JSON.stringify({ testplan: testPlanId }));
+    return this.rawRequest<{ count: number }>(
+      "GET",
+      `/testplantestcases/count?${params.toString()}`
+    );
+  }
+
+  /**
+   * List configurations for a test plan.
+   */
+  async listTestPlanConfigurations(params: {
+    projectId: number;
+    testplan: number;
+    limit?: number;
+    start?: number;
+    sort?: string;
+    filter?: Record<string, unknown>;
+  }): Promise<Array<Record<string, unknown>>> {
+    const query = new URLSearchParams();
+    query.set("project", String(params.projectId));
+    query.set("testplan", String(params.testplan));
+    if (params.limit !== undefined) {
+      query.set("_limit", String(params.limit));
+    }
+    if (params.start !== undefined) {
+      query.set("_start", String(params.start));
+    }
+    if (params.sort) {
+      query.set("_sort", params.sort);
+    }
+    if (params.filter && Object.keys(params.filter).length > 0) {
+      query.set("_filter", JSON.stringify(params.filter));
+    }
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/testplanconfigurations?${query.toString()}`
+    );
+  }
+
+  /**
+   * List runs (regressions) for a test plan.
+   */
+  async listTestPlanRegressions(params: {
+    projectId: number;
+    testplan: number;
+    testPlanConfigurationId?: number;
+    limit?: number;
+    start?: number;
+    sort?: string;
+    filter?: Record<string, unknown>;
+  }): Promise<Array<Record<string, unknown>>> {
+    const query = new URLSearchParams();
+    query.set("project", String(params.projectId));
+    query.set("testplan", String(params.testplan));
+    if (params.testPlanConfigurationId !== undefined) {
+      query.set(
+        "test_plan_configuration_id",
+        String(params.testPlanConfigurationId)
+      );
+    }
+    if (params.limit !== undefined) {
+      query.set("_limit", String(params.limit));
+    }
+    if (params.start !== undefined) {
+      query.set("_start", String(params.start));
+    }
+    if (params.sort) {
+      query.set("_sort", params.sort);
+    }
+    if (params.filter && Object.keys(params.filter).length > 0) {
+      query.set("_filter", JSON.stringify(params.filter));
+    }
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/testplanregressions?${query.toString()}`
+    );
+  }
+
+  /**
+   * Get count of runs (regressions), optionally filtered.
+   */
+  async getTestPlanRegressionCount(
+    projectId: number,
+    filter?: Record<string, unknown>
+  ): Promise<{ count: number }> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    if (filter && Object.keys(filter).length > 0) {
+      params.set("filter", JSON.stringify(filter));
+    }
+    return this.rawRequest<{ count: number }>(
+      "GET",
+      `/testplanregressions/count?${params.toString()}`
+    );
+  }
+
+  /**
+   * Update an existing test plan using raw API.
+   */
+  async updateTestPlan(
+    id: number,
+    data: {
+      projectId: number;
+      title: string;
+      priority: number;
+      status: number;
+      testPlanFolderId: number | null;
+      description?: string | null;
+      startDate?: string | null;
+      endDate?: string | null;
+      archived?: boolean;
+      assignmentMethod?: "automatic" | "manual";
+      assignmentCriteria?: "testCase" | "configuration";
+      assignedTo?: number[];
+      customFields?: Array<{
+        id: number;
+        name: string;
+        label?: string;
+        value: string | number | Array<string | number> | null;
+        valueLabel?: string | string[];
+        color?: string;
+      }>;
+    }
+  ): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+      priority: data.priority,
+      status: data.status,
+      test_plan_folder: data.testPlanFolderId,
+    };
+
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.startDate !== undefined) {
+      payload.start_date = data.startDate;
+    }
+    if (data.endDate !== undefined) {
+      payload.end_date = data.endDate;
+    }
+    if (data.archived !== undefined) {
+      payload.archived = data.archived;
+    }
+    if (data.assignmentMethod !== undefined) {
+      payload.assignment_method = data.assignmentMethod;
+    }
+    if (data.assignmentCriteria !== undefined) {
+      payload.assignment_criteria = data.assignmentCriteria;
+    }
+    if (data.assignedTo !== undefined) {
+      payload.assigned_to = data.assignedTo;
+    }
+    if (data.customFields !== undefined) {
+      payload.custom_fields = data.customFields;
+    }
+
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "PUT",
+      `/testplans/${encodedId}`,
+      payload
+    );
+  }
+
+  /**
+   * Delete a test plan using SDK.
+   */
+  async deleteTestPlan(
+    id: number,
+    projectId: number
+  ): Promise<Record<string, unknown>> {
+    return this.testPlansApi.deleteTestPlan({
+      id,
+      project: projectId,
+    }) as Promise<Record<string, unknown>>;
+  }
+
+  /**
+   * Bulk add test cases to a test plan.
+   */
+  async bulkAddTestPlanTestCases(data: {
+    testplan: number;
+    testCaseCollection: TestCaseSelectorCollection;
+    assignee?: number | "me";
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      testplan: data.testplan,
+      testCaseCollection: data.testCaseCollection,
+    };
+    if (data.assignee !== undefined) {
+      payload.assignee = data.assignee;
+    }
+    return this.rawRequest<Record<string, unknown>>(
+      "POST",
+      "/testplantestcases/bulkAdd",
+      payload
+    );
+  }
+
+  /**
+   * Create or replace test plan configurations.
+   */
+  async createTestPlanConfigurations(data: {
+    projectId: number;
+    testplan: number;
+    parameters: Array<Array<{ id?: string; field: string; value: string }>>;
+  }): Promise<Array<Record<string, unknown>> | Record<string, unknown>> {
+    const payload = {
+      project: data.projectId,
+      testplan: data.testplan,
+      parameters: data.parameters,
+    };
+    return this.rawRequest<Array<Record<string, unknown>> | Record<string, unknown>>(
+      "POST",
+      "/testplanconfigurations",
+      payload
+    );
+  }
+
+  /**
+   * Assign a test plan.
+   */
+  async assignTestPlan(data: {
+    projectId: number;
+    testplan: number;
+    executor: "me" | "team";
+    assignmentCriteria: "testCase" | "configuration";
+    assignmentMethod: "automatic" | "manual";
+    assignment: {
+      user: Array<number | "me">;
+      testCases: TestCaseSelectorCollection;
+      configuration: number[] | null;
+    };
+  }): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(data.projectId));
+    params.set("testplan", String(data.testplan));
+
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      testplan: data.testplan,
+      executor: data.executor,
+      assignment_criteria: data.assignmentCriteria,
+      assignment_method: data.assignmentMethod,
+      assignment: data.assignment,
+    };
+
+    return this.rawRequest<Record<string, unknown>>(
+      "POST",
+      `/testplans/assign?${params.toString()}`,
+      payload
+    );
+  }
+
+  /**
    * Update an existing test case using raw API (supports partial updates and custom fields)
    */
   async updateTestCase(
@@ -364,12 +724,128 @@ export class TestCollabApiClient {
   }
 
   /**
-   * List suites for a project using SDK
+   * List suites for a project using SDK.
    */
-  async listSuites(projectId: number) {
+  async listSuites(
+    projectId: number,
+    options?: {
+      filter?: Record<string, unknown>;
+    }
+  ) {
     return this.suitesApi.getAllSuites({
       project: projectId,
+      ...(options?.filter && Object.keys(options.filter).length > 0
+        ? { filter: JSON.stringify(options.filter) }
+        : {}),
     });
+  }
+
+  /**
+   * Create a new suite using raw API
+   */
+  async createSuite(data: {
+    projectId: number;
+    title: string;
+    description?: string;
+    parentId?: number | null;
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      title: data.title,
+    };
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.parentId !== undefined) {
+      payload.parent_id = data.parentId;
+    }
+    return this.rawRequest<Record<string, unknown>>("POST", "/suites", payload);
+  }
+
+  /**
+   * Get a single suite by ID using raw API
+   */
+  async getSuite(id: number, projectId: number): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "GET",
+      `/suites/${encodedId}?${params.toString()}`
+    );
+  }
+
+  /**
+   * Update a suite using raw API
+   */
+  async updateSuite(
+    id: number,
+    data: {
+      projectId: number;
+      title?: string;
+      description?: string | null;
+      parentId?: number | null;
+    }
+  ): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {};
+    if (data.title !== undefined) {
+      payload.title = data.title;
+    }
+    if (data.description !== undefined) {
+      payload.description = data.description;
+    }
+    if (data.parentId !== undefined) {
+      payload.parent_id = data.parentId;
+    }
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "PUT",
+      `/suites/${encodedId}?project=${encodeURIComponent(String(data.projectId))}`,
+      payload
+    );
+  }
+
+  /**
+   * Delete a suite using raw API
+   */
+  async deleteSuite(id: number, projectId: number): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    const encodedId = encodeURIComponent(String(id));
+    return this.rawRequest<Record<string, unknown>>(
+      "DELETE",
+      `/suites/${encodedId}?${params.toString()}`
+    );
+  }
+
+  /**
+   * Set suite sort order using raw API
+   */
+  async setSuiteOrder(data: {
+    projectId: number;
+    parentId: number | null;
+    suiteIds: number[];
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      project: data.projectId,
+      parent_id: data.parentId,
+      suites: data.suiteIds,
+    };
+    return this.rawRequest<Record<string, unknown>>(
+      "POST",
+      "/suites/setOrder",
+      payload
+    );
+  }
+
+  async listTestPlanFolders(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/testplanfolders?${params.toString()}`
+    );
   }
 
   async listTags(projectId: number) {
@@ -398,14 +874,28 @@ export class TestCollabApiClient {
     );
   }
 
-  async listProjectCustomFields(projectId: number, companyId?: number) {
-    const entity = encodeURIComponent("TestCase");
+  async listProjectUsers(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/projectusers?${params.toString()}`
+    );
+  }
+
+  async listProjectCustomFields(
+    projectId: number,
+    companyId?: number,
+    entity: "TestCase" | "TestPlan" = "TestCase"
+  ) {
+    const encodedEntity = encodeURIComponent(entity);
     const params = new URLSearchParams();
     params.set("projects", String(projectId));
     if (companyId !== undefined) {
       params.set("company", String(companyId));
     }
-    params.set("entity", entity);
+    params.set("entity", encodedEntity);
     params.set("_limit", "-1");
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",
