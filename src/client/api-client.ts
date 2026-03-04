@@ -382,6 +382,111 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Get count of test cases included in a test plan.
+   */
+  async getTestPlanTestCaseCount(
+    projectId: number,
+    testPlanId: number
+  ): Promise<{ count: number }> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("filter", JSON.stringify({ testplan: testPlanId }));
+    return this.rawRequest<{ count: number }>(
+      "GET",
+      `/testplantestcases/count?${params.toString()}`
+    );
+  }
+
+  /**
+   * List configurations for a test plan.
+   */
+  async listTestPlanConfigurations(params: {
+    projectId: number;
+    testplan: number;
+    limit?: number;
+    start?: number;
+    sort?: string;
+    filter?: Record<string, unknown>;
+  }): Promise<Array<Record<string, unknown>>> {
+    const query = new URLSearchParams();
+    query.set("project", String(params.projectId));
+    query.set("testplan", String(params.testplan));
+    if (params.limit !== undefined) {
+      query.set("_limit", String(params.limit));
+    }
+    if (params.start !== undefined) {
+      query.set("_start", String(params.start));
+    }
+    if (params.sort) {
+      query.set("_sort", params.sort);
+    }
+    if (params.filter && Object.keys(params.filter).length > 0) {
+      query.set("_filter", JSON.stringify(params.filter));
+    }
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/testplanconfigurations?${query.toString()}`
+    );
+  }
+
+  /**
+   * List runs (regressions) for a test plan.
+   */
+  async listTestPlanRegressions(params: {
+    projectId: number;
+    testplan: number;
+    testPlanConfigurationId?: number;
+    limit?: number;
+    start?: number;
+    sort?: string;
+    filter?: Record<string, unknown>;
+  }): Promise<Array<Record<string, unknown>>> {
+    const query = new URLSearchParams();
+    query.set("project", String(params.projectId));
+    query.set("testplan", String(params.testplan));
+    if (params.testPlanConfigurationId !== undefined) {
+      query.set(
+        "test_plan_configuration_id",
+        String(params.testPlanConfigurationId)
+      );
+    }
+    if (params.limit !== undefined) {
+      query.set("_limit", String(params.limit));
+    }
+    if (params.start !== undefined) {
+      query.set("_start", String(params.start));
+    }
+    if (params.sort) {
+      query.set("_sort", params.sort);
+    }
+    if (params.filter && Object.keys(params.filter).length > 0) {
+      query.set("_filter", JSON.stringify(params.filter));
+    }
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/testplanregressions?${query.toString()}`
+    );
+  }
+
+  /**
+   * Get count of runs (regressions), optionally filtered.
+   */
+  async getTestPlanRegressionCount(
+    projectId: number,
+    filter?: Record<string, unknown>
+  ): Promise<{ count: number }> {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    if (filter && Object.keys(filter).length > 0) {
+      params.set("filter", JSON.stringify(filter));
+    }
+    return this.rawRequest<{ count: number }>(
+      "GET",
+      `/testplanregressions/count?${params.toString()}`
+    );
+  }
+
+  /**
    * Update an existing test plan using raw API.
    */
   async updateTestPlan(

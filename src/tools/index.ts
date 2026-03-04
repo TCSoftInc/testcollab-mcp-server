@@ -15,6 +15,9 @@ import {
   handleGetTestCase,
 } from "./test-cases/index.js";
 import {
+  getTestPlanTool,
+  getTestPlanRegistrationSchema,
+  handleGetTestPlan,
   createTestPlanTool,
   createTestPlanSchema,
   handleCreateTestPlan,
@@ -289,6 +292,18 @@ Example:
     },
     async (args) => {
       return handleCreateTestCase(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // get_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    getTestPlanTool.name,
+    getTestPlanTool.description,
+    getTestPlanRegistrationSchema.shape,
+    async (args) => {
+      return handleGetTestPlan(args);
     }
   );
 

@@ -5,6 +5,12 @@
  */
 
 export {
+  getTestPlanTool,
+  getTestPlanRegistrationSchema,
+  getTestPlanSchema,
+  handleGetTestPlan,
+} from "./get.js";
+export {
   createTestPlanTool,
   createTestPlanSchema,
   handleCreateTestPlan,

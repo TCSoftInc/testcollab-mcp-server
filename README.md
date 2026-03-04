@@ -164,6 +164,7 @@ You should see the TestCollab tools listed. Try: *"Show me all test cases"*.
 | **create_test_case** | Create a test case with steps, tags, custom fields |
 | **update_test_case** | Update any test case field |
 | **list_test_plans** | List test plans with filtering and sorting |
+| **get_test_plan** | Fetch one test plan with included test cases count, configurations, runs, and current progress status |
 | **create_test_plan** | Create a test plan with cases, configurations, and assignment |
 | **update_test_plan** | Update test plan metadata, status, or assignment |
 | **delete_test_plan** | Delete a test plan |
