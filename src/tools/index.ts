@@ -24,6 +24,9 @@ import {
   updateTestPlanTool,
   updateTestPlanSchema,
   handleUpdateTestPlan,
+  deleteTestPlanTool,
+  deleteTestPlanSchema,
+  handleDeleteTestPlan,
 } from "./test-plans/index.js";
 import {
   createSuiteTool,
@@ -322,6 +325,18 @@ Example:
     updateTestPlanSchema.shape,
     async (args) => {
       return handleUpdateTestPlan(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // delete_test_plan
+  // -------------------------------------------------------------------------
+  server.tool(
+    deleteTestPlanTool.name,
+    deleteTestPlanTool.description,
+    deleteTestPlanSchema.shape,
+    async (args) => {
+      return handleDeleteTestPlan(args);
     }
   );
 

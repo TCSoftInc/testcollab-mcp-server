@@ -19,3 +19,8 @@ export {
   updateTestPlanSchema,
   handleUpdateTestPlan,
 } from "./update.js";
+export {
+  deleteTestPlanTool,
+  deleteTestPlanSchema,
+  handleDeleteTestPlan,
+} from "./delete.js";

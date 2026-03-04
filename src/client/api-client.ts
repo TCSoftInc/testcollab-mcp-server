@@ -451,6 +451,19 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Delete a test plan using SDK.
+   */
+  async deleteTestPlan(
+    id: number,
+    projectId: number
+  ): Promise<Record<string, unknown>> {
+    return this.testPlansApi.deleteTestPlan({
+      id,
+      project: projectId,
+    }) as Promise<Record<string, unknown>>;
+  }
+
+  /**
    * Bulk add test cases to a test plan.
    */
   async bulkAddTestPlanTestCases(data: {

@@ -33,6 +33,7 @@ claude mcp add testcollab \
 | `list_test_plans` | List test plans with filtering and sorting |
 | `create_test_plan` | Create a test plan with cases, configurations, and assignment |
 | `update_test_plan` | Update test plan metadata, status, or assignment |
+| `delete_test_plan` | Delete a test plan |
 
 ### Suites
 | Tool | Description |
