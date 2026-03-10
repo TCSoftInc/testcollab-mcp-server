@@ -28,6 +28,7 @@ type CustomFieldNode = {
   label?: string;
   field_type?: string;
   options?: string[];
+  entity?: "TestCase" | "TestPlan";
 };
 
 type RequirementNode = {
@@ -59,6 +60,8 @@ type ProjectContextPayload = {
   app_type_other?: string;
   suites: SuiteNode[];
   tags: TagNode[];
+  test_case_custom_fields: CustomFieldNode[];
+  test_plan_custom_fields: CustomFieldNode[];
   custom_fields: CustomFieldNode[];
   requirements: RequirementNode[];
   test_plan_folders: TestPlanFolderNode[];
@@ -72,6 +75,7 @@ type CacheEntry = {
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const contextCache = new Map<string, CacheEntry>();
+const PROJECT_CONTEXT_SCHEMA_VERSION = "v2";
 
 const cacheTtlMs = (() => {
   const raw = process.env["TC_PROJECT_CONTEXT_CACHE_TTL_MS"];
@@ -136,10 +140,21 @@ const hashToken = (token: string): string =>
 const getCacheKey = (projectId: number): string => {
   const requestContext = getRequestContext();
   if (requestContext) {
-    return `${requestContext.apiUrl}|${hashToken(requestContext.apiToken)}|${projectId}`;
+    return `${PROJECT_CONTEXT_SCHEMA_VERSION}|${requestContext.apiUrl}|${hashToken(requestContext.apiToken)}|${projectId}`;
   }
   const config = getConfig();
-  return `${config.apiBaseUrl}|${hashToken(config.apiToken)}|${projectId}`;
+  return `${PROJECT_CONTEXT_SCHEMA_VERSION}|${config.apiBaseUrl}|${hashToken(config.apiToken)}|${projectId}`;
+};
+
+const hasEntityScopedCustomFields = (payload: unknown): boolean => {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const record = payload as Record<string, unknown>;
+  return (
+    Array.isArray(record["test_case_custom_fields"]) &&
+    Array.isArray(record["test_plan_custom_fields"])
+  );
 };
 
 const extractCustomFieldOptions = (extra: unknown): string[] | undefined => {
@@ -318,7 +333,10 @@ const mapProjectUsers = (projectUsers: unknown[]): ProjectUserNode[] => {
   });
 };
 
-const mapCustomFields = (customFields: unknown[]): CustomFieldNode[] =>
+const mapCustomFields = (
+  customFields: unknown[],
+  entity?: "TestCase" | "TestPlan"
+): CustomFieldNode[] =>
   customFields
     .map((field) => {
       const id = toNumberId(getField(field, "id"));
@@ -339,6 +357,7 @@ const mapCustomFields = (customFields: unknown[]): CustomFieldNode[] =>
         name,
         ...(label ? { label } : {}),
         ...(fieldType ? { field_type: fieldType } : {}),
+        ...(entity ? { entity } : {}),
         ...(shouldIncludeOptions
           ? { options: options ?? [] }
           : options
@@ -432,6 +451,10 @@ export const getCachedProjectContext = (
     contextCache.delete(cacheKey);
     return null;
   }
+  if (!hasEntityScopedCustomFields(cached.payload)) {
+    contextCache.delete(cacheKey);
+    return null;
+  }
   return cached.payload;
 };
 
@@ -448,18 +471,25 @@ export async function handleProjectContext(
   if (cacheKey) {
     const cached = contextCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
-      console.log(
-        `${logPrefix} Project context cache hit for project ${projectId}`
-      );
-      return {
-        contents: [
-          {
-            uri: `testcollab://project/${projectId}/context`,
-            mimeType: "application/json",
-            text: JSON.stringify(cached.payload, null, 2),
-          },
-        ],
-      };
+      if (!hasEntityScopedCustomFields(cached.payload)) {
+        console.log(
+          `${logPrefix} Project context cache invalidated for project ${projectId} due to legacy payload shape`
+        );
+        contextCache.delete(cacheKey);
+      } else {
+        console.log(
+          `${logPrefix} Project context cache hit for project ${projectId}`
+        );
+        return {
+          contents: [
+            {
+              uri: `testcollab://project/${projectId}/context`,
+              mimeType: "application/json",
+              text: JSON.stringify(cached.payload, null, 2),
+            },
+          ],
+        };
+      }
     }
   }
 
@@ -518,6 +548,13 @@ export async function handleProjectContext(
       })}`
     );
     console.log(
+      `${apiLogPrefix} GET /customfields params: ${JSON.stringify({
+        projectId,
+        companyId,
+        entity: "TestPlan",
+      })}`
+    );
+    console.log(
       `${apiLogPrefix} GET /testplanfolders params: ${JSON.stringify({
         projectId,
       })}`
@@ -532,14 +569,32 @@ export async function handleProjectContext(
       suitesList,
       tagsList,
       requirementsList,
-      customFieldsList,
+      testCaseCustomFieldsList,
+      testPlanCustomFieldsList,
       testPlanFoldersList,
       projectUsersList,
     ] = await Promise.all([
       client.listSuites(projectId),
       client.listTags(projectId),
       client.listRequirements(projectId),
-      client.listProjectCustomFields(projectId, companyId),
+      client
+        .listProjectCustomFields(projectId, companyId, "TestCase")
+        .catch((error) => {
+          console.warn(
+            `${logPrefix} Failed to fetch TestCase custom fields for ${projectId}`,
+            error
+          );
+          return [];
+        }),
+      client
+        .listProjectCustomFields(projectId, companyId, "TestPlan")
+        .catch((error) => {
+          console.warn(
+            `${logPrefix} Failed to fetch TestPlan custom fields for ${projectId}`,
+            error
+          );
+          return [];
+        }),
       client.listTestPlanFolders(projectId).catch((error) => {
         console.warn(
           `${logPrefix} Failed to fetch test plan folders for ${projectId}`,
@@ -561,9 +616,16 @@ export async function handleProjectContext(
     const requirements = mapRequirements(
       Array.isArray(requirementsList) ? requirementsList : []
     );
-    const custom_fields = mapCustomFields(
-      Array.isArray(customFieldsList) ? customFieldsList : []
+    const test_case_custom_fields = mapCustomFields(
+      Array.isArray(testCaseCustomFieldsList) ? testCaseCustomFieldsList : [],
+      "TestCase"
     );
+    const test_plan_custom_fields = mapCustomFields(
+      Array.isArray(testPlanCustomFieldsList) ? testPlanCustomFieldsList : [],
+      "TestPlan"
+    );
+    // Backward-compatibility alias retained for existing consumers.
+    const custom_fields = test_case_custom_fields;
     const test_plan_folders = mapTestPlanFolders(
       Array.isArray(testPlanFoldersList) ? testPlanFoldersList : []
     );
@@ -579,6 +641,8 @@ export async function handleProjectContext(
       ...(appType === "other" && appTypeOther ? { app_type_other: appTypeOther } : {}),
       suites,
       tags,
+      test_case_custom_fields,
+      test_plan_custom_fields,
       custom_fields,
       requirements,
       test_plan_folders,
@@ -594,7 +658,7 @@ export async function handleProjectContext(
 
     const durationMs = Date.now() - startTime;
     console.log(
-      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, custom_fields: ${custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, users: ${users.length})`
+      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, test_case_custom_fields: ${test_case_custom_fields.length}, test_plan_custom_fields: ${test_plan_custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, users: ${users.length})`
     );
 
     return {

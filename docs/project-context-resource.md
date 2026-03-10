@@ -109,8 +109,14 @@ The server only **registers** the resource. It does **not** auto-fetch it during
   "tags": [
     { "id": 10, "name": "smoke" }
   ],
+  "test_case_custom_fields": [
+    { "id": 100, "name": "browser", "label": "Browser", "field_type": "dropdown", "entity": "TestCase", "options": ["Chrome", "Firefox"] }
+  ],
+  "test_plan_custom_fields": [
+    { "id": 200, "name": "environment", "label": "Environment", "field_type": "dropdown", "entity": "TestPlan", "options": ["staging", "production"] }
+  ],
   "custom_fields": [
-    { "id": 100, "name": "browser", "label": "Browser", "field_type": "dropdown", "options": ["Chrome", "Firefox"] }
+    { "id": 100, "name": "browser", "label": "Browser", "field_type": "dropdown", "entity": "TestCase", "options": ["Chrome", "Firefox"] }
   ],
   "requirements": [
     { "id": 501, "title": "User can reset password", "requirement_key": "REQ-12", "requirement_id": "12" }
