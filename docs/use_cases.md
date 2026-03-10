@@ -21,7 +21,7 @@ claude mcp add testcollab \
 ### Test Cases
 | Tool | Description |
 |------|-------------|
-| `get_project_context` | Get suites, tags, custom fields, requirements, and users for a project |
+| `get_project_context` | Get suites, tags, custom fields, requirements, test plan folders, releases, and users for a project |
 | `list_test_cases` | Query test cases with filtering, sorting, and pagination |
 | `get_test_case` | Fetch a single test case with full step details |
 | `create_test_case` | Create a test case with steps, tags, and custom fields |
@@ -30,9 +30,9 @@ claude mcp add testcollab \
 ### Test Plans
 | Tool | Description |
 |------|-------------|
-| `list_test_plans` | List test plans with filtering and sorting |
-| `create_test_plan` | Create a test plan with cases, configurations, and assignment |
-| `update_test_plan` | Update test plan metadata, status, or assignment |
+| `list_test_plans` | List test plans with filtering/sorting, including release ID/title filters |
+| `create_test_plan` | Create a test plan with cases, configurations, assignment, and optional release association |
+| `update_test_plan` | Update test plan metadata, status, assignment, and release association |
 | `delete_test_plan` | Delete a test plan |
 
 ### Suites

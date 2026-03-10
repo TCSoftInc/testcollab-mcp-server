@@ -332,6 +332,7 @@ export class TestCollabApiClient {
     description?: string;
     priority?: number;
     testPlanFolderId?: number | null;
+    release?: number;
     startDate?: string;
     endDate?: string;
     customFields?: Array<{
@@ -356,6 +357,9 @@ export class TestCollabApiClient {
     }
     if (data.testPlanFolderId !== undefined) {
       payload.test_plan_folder = data.testPlanFolderId;
+    }
+    if (data.release !== undefined) {
+      payload.release = data.release;
     }
     if (data.startDate !== undefined) {
       payload.start_date = data.startDate;
@@ -504,6 +508,7 @@ export class TestCollabApiClient {
       assignmentMethod?: "automatic" | "manual";
       assignmentCriteria?: "testCase" | "configuration";
       assignedTo?: number[];
+      release?: number | null;
       customFields?: Array<{
         id: number;
         name: string;
@@ -542,6 +547,9 @@ export class TestCollabApiClient {
     }
     if (data.assignedTo !== undefined) {
       payload.assigned_to = data.assignedTo;
+    }
+    if (data.release !== undefined) {
+      payload.release = data.release;
     }
     if (data.customFields !== undefined) {
       payload.custom_fields = data.customFields;
@@ -845,6 +853,16 @@ export class TestCollabApiClient {
     return this.rawRequest<Array<Record<string, unknown>>>(
       "GET",
       `/testplanfolders?${params.toString()}`
+    );
+  }
+
+  async listReleases(projectId: number) {
+    const params = new URLSearchParams();
+    params.set("project", String(projectId));
+    params.set("_limit", "-1");
+    return this.rawRequest<Array<Record<string, unknown>>>(
+      "GET",
+      `/releases?${params.toString()}`
     );
   }
 

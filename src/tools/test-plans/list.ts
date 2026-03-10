@@ -83,6 +83,10 @@ export const listTestPlansSchema = z.object({
     .union([z.number(), z.string()])
     .optional()
     .describe("Filter by test plan folder ID or folder title"),
+  release: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe("Filter by release ID or release title"),
   created_at_from: z
     .string()
     .optional()
@@ -127,7 +131,7 @@ export const listTestPlansSchema = z.object({
     .record(z.unknown())
     .optional()
     .describe(
-      "Advanced raw filter object (Strapi-style query keys, e.g. title_contains, created_at_gte, created_by, test_plan_folder)"
+      "Advanced raw filter object (Strapi-style query keys, e.g. title_contains, created_at_gte, created_by, test_plan_folder, release)"
     ),
 });
 
@@ -148,6 +152,7 @@ Optional filters:
 - archived: true/false
 - created_by: creator user ID
 - test_plan_folder: folder ID or folder title
+- release: release ID or release title
 - created_at_from/to, updated_at_from/to, start_date_from/to, end_date_from/to, last_run_from/to
 - filter: raw filter object for advanced keys (merged with explicit filters)
 
@@ -239,6 +244,10 @@ Example:
       test_plan_folder: {
         oneOf: [{ type: "number" }, { type: "string" }],
         description: "Filter by test plan folder ID or folder title",
+      },
+      release: {
+        oneOf: [{ type: "number" }, { type: "string" }],
+        description: "Filter by release ID or release title",
       },
       created_at_from: {
         type: "string",
@@ -354,6 +363,12 @@ type TestPlanFolderLookup = {
   normalizedTitle: string;
 };
 
+type ReleaseLookup = {
+  id: number;
+  title: string;
+  normalizedTitle: string;
+};
+
 const mapTestPlanFoldersForLookup = (folders: unknown[]): TestPlanFolderLookup[] => {
   const deduped = new Map<number, TestPlanFolderLookup>();
 
@@ -391,6 +406,45 @@ const findFoldersByTitle = (
 ): TestPlanFolderLookup[] => {
   const normalized = normalizeOptionLabel(title);
   return folders.filter((folder) => folder.normalizedTitle === normalized);
+};
+
+const mapReleasesForLookup = (releases: unknown[]): ReleaseLookup[] => {
+  const deduped = new Map<number, ReleaseLookup>();
+
+  releases.forEach((release) => {
+    if (!release || typeof release !== "object") {
+      return;
+    }
+    const record = release as Record<string, unknown>;
+    const id = toNumberId(record["id"]);
+    const title = normalizeString(record["title"] ?? record["name"]);
+
+    if (!id || !title) {
+      return;
+    }
+
+    deduped.set(id, {
+      id,
+      title,
+      normalizedTitle: normalizeOptionLabel(title),
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
+
+const findReleasesByTitle = (
+  releases: ReleaseLookup[],
+  title: string
+): ReleaseLookup[] => {
+  const normalized = normalizeOptionLabel(title);
+  return releases.filter((release) => release.normalizedTitle === normalized);
 };
 
 const toStatusCode = (value: ListTestPlansInput["status"]): number | undefined => {
@@ -452,6 +506,7 @@ export async function handleListTestPlans(
     archived,
     created_by,
     test_plan_folder,
+    release,
     created_at_from,
     created_at_to,
     updated_at_from,
@@ -572,6 +627,82 @@ export async function handleListTestPlans(
       }
     }
 
+    if (release !== undefined) {
+      const numericReleaseId = toNumberId(release);
+      if (numericReleaseId !== undefined) {
+        mergedFilter.release = numericReleaseId;
+      } else {
+        const releaseTitle = normalizeString(release);
+        if (!releaseTitle) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: {
+                    code: "INVALID_RELEASE",
+                    message: "release must be a numeric ID or non-empty release title.",
+                  },
+                }),
+              },
+            ],
+          };
+        }
+
+        const cachedContext = getCachedProjectContext(resolvedProjectId);
+        const cachedReleases = mapReleasesForLookup(
+          Array.isArray(cachedContext?.releases) ? cachedContext.releases : []
+        );
+
+        let matchedReleases = findReleasesByTitle(cachedReleases, releaseTitle);
+
+        if (matchedReleases.length !== 1) {
+          const releases = await client.listReleases(resolvedProjectId);
+          const liveReleases = mapReleasesForLookup(
+            Array.isArray(releases) ? releases : []
+          );
+          matchedReleases = findReleasesByTitle(liveReleases, releaseTitle);
+        }
+
+        if (matchedReleases.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: {
+                    code: "RELEASE_NOT_FOUND",
+                    message: `Release not found with title "${releaseTitle}" in that project.`,
+                  },
+                }),
+              },
+            ],
+          };
+        }
+
+        if (matchedReleases.length > 1) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: {
+                    code: "AMBIGUOUS_RELEASE",
+                    message: `Multiple releases matched "${releaseTitle}". Provide release ID instead.`,
+                    details: {
+                      matching_ids: matchedReleases.map((item) => item.id),
+                    },
+                  },
+                }),
+              },
+            ],
+          };
+        }
+
+        mergedFilter.release = matchedReleases[0].id;
+      }
+    }
+
     if (title_contains !== undefined) {
       mergedFilter.title_contains = title_contains;
     }
@@ -654,6 +785,12 @@ export async function handleListTestPlans(
           ? {
               id: plan.testPlanFolder.id,
               title: plan.testPlanFolder.title,
+            }
+          : null,
+        release: plan.release
+          ? {
+              id: plan.release.id,
+              title: plan.release.name,
             }
           : null,
         createdBy: plan.createdBy

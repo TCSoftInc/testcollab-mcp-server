@@ -44,6 +44,11 @@ type TestPlanFolderNode = {
   parent_id: number | null;
 };
 
+type ReleaseNode = {
+  id: number;
+  title: string;
+};
+
 type ProjectUserNode = {
   id: number;
   name: string;
@@ -65,6 +70,7 @@ type ProjectContextPayload = {
   custom_fields: CustomFieldNode[];
   requirements: RequirementNode[];
   test_plan_folders: TestPlanFolderNode[];
+  releases: ReleaseNode[];
   users: ProjectUserNode[];
 };
 
@@ -75,7 +81,7 @@ type CacheEntry = {
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const contextCache = new Map<string, CacheEntry>();
-const PROJECT_CONTEXT_SCHEMA_VERSION = "v2";
+const PROJECT_CONTEXT_SCHEMA_VERSION = "v3";
 
 const cacheTtlMs = (() => {
   const raw = process.env["TC_PROJECT_CONTEXT_CACHE_TTL_MS"];
@@ -261,6 +267,33 @@ const mapTestPlanFolders = (folders: unknown[]): TestPlanFolderNode[] => {
       id,
       title,
       parent_id: parentId ?? null,
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
+
+const mapReleases = (releases: unknown[]): ReleaseNode[] => {
+  const deduped = new Map<number, ReleaseNode>();
+
+  releases.forEach((release) => {
+    const id = toNumberId(getField(release, "id"));
+    const title =
+      normalizeString(getField<string>(release, "title")) ??
+      normalizeString(getField<string>(release, "name"));
+    if (!id || !title) {
+      return;
+    }
+
+    deduped.set(id, {
+      id,
+      title,
     });
   });
 
@@ -560,6 +593,11 @@ export async function handleProjectContext(
       })}`
     );
     console.log(
+      `${apiLogPrefix} GET /releases params: ${JSON.stringify({
+        projectId,
+      })}`
+    );
+    console.log(
       `${apiLogPrefix} GET /projectusers params: ${JSON.stringify({
         projectId,
       })}`
@@ -572,6 +610,7 @@ export async function handleProjectContext(
       testCaseCustomFieldsList,
       testPlanCustomFieldsList,
       testPlanFoldersList,
+      releasesList,
       projectUsersList,
     ] = await Promise.all([
       client.listSuites(projectId),
@@ -602,6 +641,10 @@ export async function handleProjectContext(
         );
         return [];
       }),
+      client.listReleases(projectId).catch((error) => {
+        console.warn(`${logPrefix} Failed to fetch releases for ${projectId}`, error);
+        return [];
+      }),
       client.listProjectUsers(projectId).catch((error) => {
         console.warn(
           `${logPrefix} Failed to fetch project users for ${projectId}`,
@@ -629,6 +672,7 @@ export async function handleProjectContext(
     const test_plan_folders = mapTestPlanFolders(
       Array.isArray(testPlanFoldersList) ? testPlanFoldersList : []
     );
+    const releases = mapReleases(Array.isArray(releasesList) ? releasesList : []);
     const users = mapProjectUsers(
       Array.isArray(projectUsersList) ? projectUsersList : []
     );
@@ -646,6 +690,7 @@ export async function handleProjectContext(
       custom_fields,
       requirements,
       test_plan_folders,
+      releases,
       users,
     };
 
@@ -658,7 +703,7 @@ export async function handleProjectContext(
 
     const durationMs = Date.now() - startTime;
     console.log(
-      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, test_case_custom_fields: ${test_case_custom_fields.length}, test_plan_custom_fields: ${test_plan_custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, users: ${users.length})`
+      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, test_case_custom_fields: ${test_case_custom_fields.length}, test_plan_custom_fields: ${test_plan_custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, releases: ${releases.length}, users: ${users.length})`
     );
 
     return {

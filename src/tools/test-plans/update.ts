@@ -115,6 +115,10 @@ export const updateTestPlanSchema = z.object({
     .union([z.number(), z.string(), z.null()])
     .optional()
     .describe("Test plan folder ID or title (null to place at root)"),
+  release: z
+    .union([z.number(), z.string(), z.null()])
+    .optional()
+    .describe("Release ID or title (null to clear)"),
   start_date: z
     .string()
     .nullable()
@@ -163,6 +167,7 @@ Fields:
 - priority: 0/1/2 or low/normal/high
 - status: 0/1/2/3 or draft/ready/finished/finished_with_failures
 - test_plan_folder: ID/title/null
+- release: ID/title/null
 - start_date, end_date (null to clear)
 - archived
 - custom_fields (null/[] to clear)
@@ -219,6 +224,10 @@ Example:
       test_plan_folder: {
         oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
         description: "Test plan folder ID or title (null to place at root)",
+      },
+      release: {
+        oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+        description: "Release ID or title (null to clear)",
       },
       start_date: {
         oneOf: [{ type: "string" }, { type: "null" }],
@@ -350,6 +359,12 @@ type ProjectUserLookup = {
 };
 
 type TestPlanFolderLookup = {
+  id: number;
+  title: string;
+  normalizedTitle: string;
+};
+
+type ReleaseLookup = {
   id: number;
   title: string;
   normalizedTitle: string;
@@ -735,6 +750,43 @@ const findFoldersByTitle = (
   return folders.filter((folder) => folder.normalizedTitle === normalized);
 };
 
+const mapReleasesForLookup = (releases: unknown[]): ReleaseLookup[] => {
+  const deduped = new Map<number, ReleaseLookup>();
+
+  releases.forEach((release) => {
+    const id = toNumberId(getField(release, "id"));
+    const title =
+      normalizeString(getField<string>(release, "title")) ??
+      normalizeString(getField<string>(release, "name"));
+
+    if (!id || !title) {
+      return;
+    }
+
+    deduped.set(id, {
+      id,
+      title,
+      normalizedTitle: normalizeOptionLabel(title),
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
+
+const findReleasesByTitle = (
+  releases: ReleaseLookup[],
+  title: string
+): ReleaseLookup[] => {
+  const normalized = normalizeOptionLabel(title);
+  return releases.filter((release) => release.normalizedTitle === normalized);
+};
+
 const toSelectorCollection = (
   testCaseIds: number[],
   selector: TestCaseSelectorQuery[] | undefined
@@ -865,6 +917,7 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
     priority,
     status,
     test_plan_folder,
+    release,
     start_date,
     end_date,
     archived,
@@ -882,6 +935,7 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
     "priority",
     "status",
     "test_plan_folder",
+    "release",
     "start_date",
     "end_date",
     "archived",
@@ -947,6 +1001,11 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
         existingFolderRaw === null
           ? null
           : extractId(existingFolderRaw) ?? toNumberId(existingFolderRaw);
+      const existingReleaseRaw = getField(existing, "release");
+      const existingReleaseId =
+        existingReleaseRaw === null
+          ? null
+          : extractId(existingReleaseRaw) ?? toNumberId(existingReleaseRaw);
 
       const resolvedTitle = title ?? existingTitle;
       const resolvedPriority = toPriorityCode(priority) ?? existingPriority;
@@ -1017,6 +1076,59 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
             }
 
             resolvedFolderId = matchedFolders[0].id;
+          }
+        }
+      }
+
+      let resolvedReleaseId: number | null = existingReleaseId ?? null;
+      if (hasField("release")) {
+        if (release === null) {
+          resolvedReleaseId = null;
+        } else {
+          const numericReleaseId = toNumberId(release);
+          if (numericReleaseId !== undefined) {
+            resolvedReleaseId = numericReleaseId;
+          } else {
+            const releaseTitle = normalizeString(release);
+            if (!releaseTitle) {
+              return toError(
+                "INVALID_RELEASE",
+                "release must be a numeric ID, non-empty title, or null."
+              );
+            }
+
+            const cachedContext = getCachedProjectContext(resolvedProjectId);
+            const cachedReleases = mapReleasesForLookup(
+              Array.isArray(cachedContext?.releases) ? cachedContext.releases : []
+            );
+
+            let matchedReleases = findReleasesByTitle(cachedReleases, releaseTitle);
+
+            if (matchedReleases.length !== 1) {
+              const releases = await client.listReleases(resolvedProjectId);
+              const liveReleases = mapReleasesForLookup(
+                Array.isArray(releases) ? releases : []
+              );
+              matchedReleases = findReleasesByTitle(liveReleases, releaseTitle);
+            }
+
+            if (matchedReleases.length === 0) {
+              return toError(
+                "RELEASE_NOT_FOUND",
+                `Release not found with title "${releaseTitle}" in that project.`
+              );
+            }
+
+            if (matchedReleases.length > 1) {
+              const matchingIds = matchedReleases.map((item) => item.id);
+              return toError(
+                "AMBIGUOUS_RELEASE",
+                `Multiple releases matched "${releaseTitle}". Provide release ID instead.`,
+                { matching_ids: matchingIds }
+              );
+            }
+
+            resolvedReleaseId = matchedReleases[0].id;
           }
         }
       }
@@ -1194,6 +1306,7 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
         priority: resolvedPriority,
         status: resolvedStatus,
         testPlanFolderId: resolvedFolderId,
+        release: resolvedReleaseId,
         ...(hasField("description") ? { description: description ?? null } : {}),
         ...(hasField("start_date") ? { startDate: start_date ?? null } : {}),
         ...(hasField("end_date") ? { endDate: end_date ?? null } : {}),
@@ -1462,6 +1575,11 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
           fallbackFolderRaw === null
             ? null
             : extractId(fallbackFolderRaw) ?? toNumberId(fallbackFolderRaw);
+        const fallbackReleaseRaw = getField(fallbackExisting, "release");
+        const fallbackReleaseId =
+          fallbackReleaseRaw === null
+            ? null
+            : extractId(fallbackReleaseRaw) ?? toNumberId(fallbackReleaseRaw);
 
         if (!fallbackTitle || fallbackPriority === undefined || fallbackStatus === undefined) {
           return toError(
@@ -1483,6 +1601,7 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
           priority: fallbackPriority,
           status: fallbackStatus,
           testPlanFolderId: fallbackFolderId ?? null,
+          ...(fallbackReleaseId !== undefined ? { release: fallbackReleaseId } : {}),
           assignmentMethod,
           assignmentCriteria,
           assignedTo: fallbackAssigneeIds,

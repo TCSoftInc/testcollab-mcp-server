@@ -127,6 +127,10 @@ export const createTestPlanSchema = z.object({
     .union([z.number(), z.string(), z.null()])
     .optional()
     .describe("Test plan folder ID or title (null to place at root)"),
+  release: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe("Release ID or title"),
   start_date: z
     .string()
     .optional()
@@ -177,6 +181,7 @@ Optional:
 - description
 - priority (0=Low, 1=Normal, 2=High)
 - test_plan_folder (ID or title)
+- release (ID or title)
 - start_date, end_date
 - custom_fields
 - test_cases (test_case_ids/selector/assignee; assignee supports user ID/"me"/name)
@@ -227,6 +232,10 @@ Example:
       test_plan_folder: {
         oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
         description: "Test plan folder ID or title (null for root)",
+      },
+      release: {
+        oneOf: [{ type: "number" }, { type: "string" }],
+        description: "Release ID or title",
       },
       start_date: {
         type: "string",
@@ -386,6 +395,12 @@ type ProjectUserLookup = {
 };
 
 type TestPlanFolderLookup = {
+  id: number;
+  title: string;
+  normalizedTitle: string;
+};
+
+type ReleaseLookup = {
   id: number;
   title: string;
   normalizedTitle: string;
@@ -806,6 +821,43 @@ const findFoldersByTitle = (
   return folders.filter((folder) => folder.normalizedTitle === normalized);
 };
 
+const mapReleasesForLookup = (releases: unknown[]): ReleaseLookup[] => {
+  const deduped = new Map<number, ReleaseLookup>();
+
+  releases.forEach((release) => {
+    const id = toNumberId(getField(release, "id"));
+    const title =
+      normalizeString(getField<string>(release, "title")) ??
+      normalizeString(getField<string>(release, "name"));
+
+    if (!id || !title) {
+      return;
+    }
+
+    deduped.set(id, {
+      id,
+      title,
+      normalizedTitle: normalizeOptionLabel(title),
+    });
+  });
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const byTitle = a.title.localeCompare(b.title);
+    if (byTitle !== 0) {
+      return byTitle;
+    }
+    return a.id - b.id;
+  });
+};
+
+const findReleasesByTitle = (
+  releases: ReleaseLookup[],
+  title: string
+): ReleaseLookup[] => {
+  const normalized = normalizeOptionLabel(title);
+  return releases.filter((release) => release.normalizedTitle === normalized);
+};
+
 const toSelectorCollection = (
   testCaseIds: number[],
   selector: TestCaseSelectorQuery[] | undefined
@@ -970,6 +1022,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
     description,
     priority,
     test_plan_folder,
+    release,
     start_date,
     end_date,
     custom_fields,
@@ -1162,6 +1215,56 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
 
           resolvedFolderId = matchedFolders[0].id;
         }
+      }
+    }
+
+    // Resolve release (supports ID or title)
+    let resolvedReleaseId: number | undefined;
+    if (release !== undefined) {
+      const numericReleaseId = toNumberId(release);
+      if (numericReleaseId !== undefined) {
+        resolvedReleaseId = numericReleaseId;
+      } else {
+        const releaseTitle = normalizeString(release);
+        if (!releaseTitle) {
+          return toError(
+            "INVALID_RELEASE",
+            "release must be a numeric ID or non-empty title."
+          );
+        }
+
+        const cachedContext = getCachedProjectContext(resolvedProjectId);
+        const cachedReleases = mapReleasesForLookup(
+          Array.isArray(cachedContext?.releases) ? cachedContext.releases : []
+        );
+
+        let matchedReleases = findReleasesByTitle(cachedReleases, releaseTitle);
+
+        if (matchedReleases.length !== 1) {
+          const releases = await client.listReleases(resolvedProjectId);
+          const liveReleases = mapReleasesForLookup(
+            Array.isArray(releases) ? releases : []
+          );
+          matchedReleases = findReleasesByTitle(liveReleases, releaseTitle);
+        }
+
+        if (matchedReleases.length === 0) {
+          return toError(
+            "RELEASE_NOT_FOUND",
+            `Release not found with title "${releaseTitle}" in that project.`
+          );
+        }
+
+        if (matchedReleases.length > 1) {
+          const matchingIds = matchedReleases.map((item) => item.id);
+          return toError(
+            "AMBIGUOUS_RELEASE",
+            `Multiple releases matched "${releaseTitle}". Provide release ID instead.`,
+            { matching_ids: matchingIds }
+          );
+        }
+
+        resolvedReleaseId = matchedReleases[0].id;
       }
     }
 
@@ -1421,6 +1524,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       description,
       priority,
       testPlanFolderId: resolvedFolderId,
+      release: resolvedReleaseId,
       startDate: start_date,
       endDate: end_date,
       customFields: resolvedCustomFields,
