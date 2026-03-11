@@ -10,30 +10,7 @@ Log in to TestCollab → **My Profile Settings** → **API Token** tab → **Gen
 
 ### 2. Add the server to your MCP client
 
-**Claude Code**
-
-```bash
-# Required: API token from TestCollab user profile
-TC_API_TOKEN=your-api-token-here
-
-# Optional: API base URL (default: http://localhost:1337)
-TC_API_URL=http://localhost:1337
-
-# Optional: Default project ID (eliminates need to specify project_id in every request)
-TC_DEFAULT_PROJECT=16
-```
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TC_API_TOKEN` | Yes | API token from TestCollab user profile |
-| `TC_API_URL` | No | API base URL (default: `http://localhost:1337`) |
-| `TC_DEFAULT_PROJECT` | No | Default project ID - if set, `project_id` becomes optional in tool calls |
-
-## Usage
-
-### With Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Claude Code** — add to `.mcp.json` in your project root:
 
 ```json
 {
@@ -51,7 +28,25 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-**Cursor** — add to `.cursor/mcp.json`:
+**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "testcollab": {
+      "command": "npx",
+      "args": ["-y", "@testcollab/mcp-server"],
+      "env": {
+        "TC_API_TOKEN": "your-api-token",
+        "TC_API_URL": "https://api.testcollab.io",
+        "TC_DEFAULT_PROJECT": "16"
+      }
+    }
+  }
+}
+```
+
+**Cursor** — add to `.cursor/mcp.json` in your project root:
 
 ```json
 {
@@ -90,23 +85,6 @@ List test cases from a project with optional filtering.
 | `sort` | array | No | Sort specification |
 | `limit` | number | No | Max results (1-100, default: 50) |
 | `offset` | number | No | Skip N results (default: 0) |
-
-**Filter Example:**
-```json
-{
-  "mcpServers": {
-    "testcollab": {
-      "command": "npx",
-      "args": ["-y", "@testcollab/mcp-server"],
-      "env": {
-        "TC_API_TOKEN": "your-api-token",
-        "TC_API_URL": "https://api.testcollab.io",
-        "TC_DEFAULT_PROJECT": "16"
-      }
-    }
-  }
-}
-```
 
 ### 3. Verify
 
