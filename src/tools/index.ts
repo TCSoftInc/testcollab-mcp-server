@@ -145,8 +145,8 @@ export function registerTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   server.tool(
     "get_project_context",
-    `Get project context including project name, description, application type, suite tree, tags, custom fields, requirements, test plan folders, and project users.
-Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names, folder titles, user names) to numeric IDs used by other tools.
+    `Get project context including project name, description, application type, suite tree, tags, test_case_custom_fields, test_plan_custom_fields, requirements, test plan folders, releases, and project users.
+Returns the metadata needed to resolve human-readable names (e.g. suite titles, tag names, folder titles, release titles, user names) to numeric IDs used by other tools.
 Also returns the project description and app_type (web_app, mobile_app, api, desktop_app, other) which should inform the style of test steps you generate.
 
 IMPORTANT: Call this tool at the start of every conversation before using any other TestCollab tool.

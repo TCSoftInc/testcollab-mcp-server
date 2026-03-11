@@ -4,7 +4,7 @@
 
 When users say things like "list test cases in suite Login" to the MCP server, the AI has no way to resolve the suite name "Login" to its numeric ID. The `list_test_cases` tool accepts `suite` (ID or title), so the AI either fails or has to ask the user for the ID - defeating the purpose of natural language interaction.
 
-The same problem applies to tags, custom fields, project users, and any other entity referenced by name but stored by numeric ID.
+The same problem applies to tags, custom fields, test plan folders, releases, project users, and any other entity referenced by name but stored by numeric ID.
 
 ## Solution
 
@@ -19,7 +19,7 @@ The server only **registers** the resource. It does **not** auto-fetch it during
 - If you don’t see project-context queries, it means the client never read the resource.
 
 **How to verify:**
-- When the resource is read, the server logs `Building project context for {project_id}` and the API calls for suites/tags/requirements/custom fields/project users.
+- When the resource is read, the server logs `Building project context for {project_id}` and the API calls for suites/tags/requirements/custom fields/test plan folders/releases/project users.
 - If those logs never appear, the resource was not requested.
 
 ## Runtime Check
@@ -28,7 +28,7 @@ The server only **registers** the resource. It does **not** auto-fetch it during
 2. From the client, call `resources/list`, then `resources/read` on `testcollab://project/{project_id}/context`.
 3. Check server logs for `Building project context for {project_id}` and the API calls.
 4. If you only call `list_test_cases`, you will not see project-context logs because tool calls do not auto-load resources.
-5. After the resource is read and cached, `list_test_cases` will reuse that cached context for name lookups (log: `Using cached project context for list_test_cases lookups`).
+5. After the resource is read and cached, tools like `list_test_cases`, `list_test_plans`, `create_test_plan`, and `update_test_plan` will reuse that cached context for name lookups.
 
 ## Client Snippets
 
@@ -109,11 +109,23 @@ The server only **registers** the resource. It does **not** auto-fetch it during
   "tags": [
     { "id": 10, "name": "smoke" }
   ],
+  "test_case_custom_fields": [
+    { "id": 100, "name": "browser", "label": "Browser", "field_type": "dropdown", "entity": "TestCase", "options": ["Chrome", "Firefox"] }
+  ],
+  "test_plan_custom_fields": [
+    { "id": 200, "name": "environment", "label": "Environment", "field_type": "dropdown", "entity": "TestPlan", "options": ["staging", "production"] }
+  ],
   "custom_fields": [
-    { "id": 100, "name": "browser", "label": "Browser", "field_type": "dropdown", "options": ["Chrome", "Firefox"] }
+    { "id": 100, "name": "browser", "label": "Browser", "field_type": "dropdown", "entity": "TestCase", "options": ["Chrome", "Firefox"] }
   ],
   "requirements": [
     { "id": 501, "title": "User can reset password", "requirement_key": "REQ-12", "requirement_id": "12" }
+  ],
+  "test_plan_folders": [
+    { "id": 42, "title": "Mobile", "parent_id": null }
+  ],
+  "releases": [
+    { "id": 88, "title": "Release 3.0" }
   ],
   "users": [
     { "id": 27, "name": "Jane Doe", "email": "jane@example.com", "username": "jane", "role": "Tester" }

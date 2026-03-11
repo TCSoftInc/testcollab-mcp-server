@@ -30,7 +30,7 @@ export function registerResources(server: McpServer): void {
     }),
     {
       description:
-        "Project context with suite tree, tags, requirements, custom fields, test plan folders, and project users. Use this to resolve human-readable names (e.g. suite title, folder title, user name) to numeric IDs.",
+        "Project context with suite tree, tags, requirements, test_case_custom_fields, test_plan_custom_fields, test plan folders, releases, and project users. Use this to resolve human-readable names (e.g. suite title, folder title, release title, user name) to numeric IDs.",
       mimeType: "application/json",
     },
     async (uri, variables) => {

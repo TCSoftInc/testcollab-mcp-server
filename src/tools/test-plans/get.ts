@@ -840,6 +840,11 @@ export async function handleGetTestPlan(
     const testPlanFolderTitle =
       normalizeString(getField<string>(testPlanFolderRaw, "title")) ??
       normalizeString(getField<string>(testPlanFolderRaw, "name"));
+    const releaseRaw = getField(plan, "release");
+    const releaseId = extractId(releaseRaw);
+    const releaseTitle =
+      normalizeString(getField<string>(releaseRaw, "title")) ??
+      normalizeString(getField<string>(releaseRaw, "name"));
 
     const createdBy = mapUser(
       getField(plan, "created_by") ?? getField(plan, "createdBy")
@@ -883,11 +888,19 @@ export async function handleGetTestPlan(
       ...(typeof getField(plan, "archived") === "boolean"
         ? { archived: getField(plan, "archived") }
         : {}),
-      ...(testPlanFolderId
+      ...(testPlanFolderId !== undefined
         ? {
             testPlanFolder: {
               id: testPlanFolderId,
               ...(testPlanFolderTitle ? { title: testPlanFolderTitle } : {}),
+            },
+          }
+        : {}),
+      ...(releaseId !== undefined
+        ? {
+            release: {
+              id: releaseId,
+              ...(releaseTitle ? { title: releaseTitle } : {}),
             },
           }
         : {}),
