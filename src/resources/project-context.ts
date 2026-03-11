@@ -613,27 +613,49 @@ export async function handleProjectContext(
       releasesList,
       projectUsersList,
     ] = await Promise.all([
-      client.listSuites(projectId),
-      client.listTags(projectId),
-      client.listRequirements(projectId),
-      client
-        .listProjectCustomFields(projectId, companyId, "TestCase")
-        .catch((error) => {
-          console.warn(
-            `${logPrefix} Failed to fetch TestCase custom fields for ${projectId}`,
-            error
-          );
-          return [];
-        }),
-      client
-        .listProjectCustomFields(projectId, companyId, "TestPlan")
-        .catch((error) => {
-          console.warn(
-            `${logPrefix} Failed to fetch TestPlan custom fields for ${projectId}`,
-            error
-          );
-          return [];
-        }),
+      client.listSuites(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch suites for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+      client.listTags(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch tags for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+      client.listRequirements(projectId).catch((error) => {
+        console.warn(
+          `${logPrefix} Failed to fetch requirements for ${projectId}`,
+          error
+        );
+        return [];
+      }),
+      companyId
+        ? client
+            .listProjectCustomFields(projectId, companyId, "TestCase")
+            .catch((error) => {
+              console.warn(
+                `${logPrefix} Failed to fetch TestCase custom fields for ${projectId}`,
+                error
+              );
+              return [];
+            })
+        : Promise.resolve([]),
+      companyId
+        ? client
+            .listProjectCustomFields(projectId, companyId, "TestPlan")
+            .catch((error) => {
+              console.warn(
+                `${logPrefix} Failed to fetch TestPlan custom fields for ${projectId}`,
+                error
+              );
+              return [];
+            })
+        : Promise.resolve([]),
       client.listTestPlanFolders(projectId).catch((error) => {
         console.warn(
           `${logPrefix} Failed to fetch test plan folders for ${projectId}`,
