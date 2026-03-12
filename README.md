@@ -113,7 +113,7 @@ You should see the TestCollab tools listed. Try: *"Show me all test cases"*.
 | **update_test_case** | Update any test case field |
 | **list_test_plans** | List test plans with filtering/sorting (including release ID/title filters) |
 | **get_test_plan** | Fetch one test plan with included test cases count, configurations, runs, current progress status, and release info |
-| **create_test_plan** | Create a test plan with cases, configurations, assignment, and optional release association |
+| **create_test_plan** | Create a test plan with cases, configurations, assignment, and optional release association. Requires assignee info via `test_cases.assignee` or `assignment.user_ids` |
 | **update_test_plan** | Update test plan metadata, status, assignment, and release association |
 | **delete_test_plan** | Delete a test plan |
 | **list_suites** | List all test suites in a project (supports `title`, `parent`, and `description` filters) |
@@ -193,6 +193,10 @@ npm run lint         # Lint
 **"project_id is required" error**
 - Set `TC_DEFAULT_PROJECT` in your env config, or
 - Specify the project in your prompt: *"Show me test cases in project 16"*
+
+**"MISSING_ASSIGNEE_INFO" error (create_test_plan)**
+- Provide `test_cases.assignee` (user ID, `"me"`, name, username, or email), or
+- Provide `assignment.user_ids` (IDs/names or `"me"`), then retry.
 
 ## License
 

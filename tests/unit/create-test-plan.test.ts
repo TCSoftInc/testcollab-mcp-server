@@ -189,15 +189,24 @@ describe("create_test_plan tool", () => {
     const createTestPlan = vi
       .fn()
       .mockResolvedValue({ id: 777, title: "Release 2.9 Regression" });
+    const assignTestPlan = vi
+      .fn()
+      .mockResolvedValue({ status: true, created_id: 1 });
 
     vi.mocked(getApiClient).mockReturnValue({
       listTestPlanFolders,
       createTestPlan,
+      assignTestPlan,
     } as unknown as ReturnType<typeof getApiClient>);
 
     const response = await handleCreateTestPlan({
       title: "Release 2.9 Regression",
       test_plan_folder: "mobile",
+      assignment: {
+        assignment_criteria: "testCase",
+        assignment_method: "automatic",
+        user_ids: [27],
+      },
     });
 
     const payload = JSON.parse(response.content[0].text) as {
@@ -212,6 +221,21 @@ describe("create_test_plan tool", () => {
         testPlanFolderId: 42,
       })
     );
+    expect(assignTestPlan).toHaveBeenCalledWith({
+      projectId: 16,
+      testplan: 777,
+      executor: "team",
+      assignmentCriteria: "testCase",
+      assignmentMethod: "automatic",
+      assignment: {
+        user: [27],
+        testCases: {
+          testCases: [],
+          selector: [],
+        },
+        configuration: null,
+      },
+    });
   });
 
   it('passes test_cases.assignee as "me" for bulk add and auto-assignment', async () => {
@@ -344,6 +368,49 @@ describe("create_test_plan tool", () => {
     });
   });
 
+  it("returns missing-info error when test cases are provided without assignee info", async () => {
+    const createTestPlan = vi.fn();
+    const bulkAddTestPlanTestCases = vi.fn();
+    const assignTestPlan = vi.fn();
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      bulkAddTestPlanTestCases,
+      assignTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Unassigned plan",
+      project_id: 16,
+      test_cases: {
+        test_case_ids: [1001, 1002],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      error: {
+        code: string;
+        details?: {
+          missing_fields?: string[];
+          follow_up_questions?: string[];
+        };
+      };
+    };
+
+    expect(payload.error.code).toBe("MISSING_ASSIGNEE_INFO");
+    expect(payload.error.details?.missing_fields).toEqual([
+      "test_cases.assignee",
+      "assignment.user_ids",
+    ]);
+    expect(payload.error.details?.follow_up_questions).toEqual([
+      'Who should be assigned as test_cases.assignee? (user ID, "me", name, username, or email)',
+      "Which user_ids should receive the manual assignment?",
+    ]);
+    expect(createTestPlan).not.toHaveBeenCalled();
+    expect(bulkAddTestPlanTestCases).not.toHaveBeenCalled();
+    expect(assignTestPlan).not.toHaveBeenCalled();
+  });
+
   it('uses assignment user "me" when prompt-level input targets self', async () => {
     const createTestPlan = vi
       .fn()
@@ -457,13 +524,22 @@ describe("create_test_plan tool", () => {
     const createTestPlan = vi
       .fn()
       .mockResolvedValue({ id: 782, title: "Generated title" });
+    const assignTestPlan = vi
+      .fn()
+      .mockResolvedValue({ status: true, created_id: 1 });
 
     vi.mocked(getApiClient).mockReturnValue({
       createTestPlan,
+      assignTestPlan,
     } as unknown as ReturnType<typeof getApiClient>);
 
     const response = await handleCreateTestPlan({
       project_id: 16,
+      assignment: {
+        assignment_criteria: "testCase",
+        assignment_method: "automatic",
+        user_ids: [27],
+      },
     });
 
     const payload = JSON.parse(response.content[0].text) as {
@@ -473,12 +549,65 @@ describe("create_test_plan tool", () => {
 
     expect(payload.success).toBe(true);
     expect(payload.steps.create_test_plan.status).toBe("completed");
+    expect(payload.steps.assign_test_plan.status).toBe("completed");
     expect(createTestPlan).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 16,
         title: "Test Plan 20 February 2026 10:30:05",
       })
     );
+    expect(assignTestPlan).toHaveBeenCalledWith({
+      projectId: 16,
+      testplan: 782,
+      executor: "team",
+      assignmentCriteria: "testCase",
+      assignmentMethod: "automatic",
+      assignment: {
+        user: [27],
+        testCases: {
+          testCases: [],
+          selector: [],
+        },
+        configuration: null,
+      },
+    });
+  });
+
+  it("returns missing-info error when assignee info is not provided", async () => {
+    const createTestPlan = vi.fn();
+    const assignTestPlan = vi.fn();
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      assignTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Plan without assignee",
+      project_id: 16,
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      error: {
+        code: string;
+        details?: {
+          missing_fields?: string[];
+          follow_up_questions?: string[];
+        };
+      };
+    };
+
+    expect(payload.error.code).toBe("MISSING_ASSIGNEE_INFO");
+    expect(payload.error.details?.missing_fields).toEqual([
+      "test_cases.assignee",
+      "assignment.user_ids",
+    ]);
+    expect(payload.error.details?.follow_up_questions).toEqual([
+      'Who should be assigned as test_cases.assignee? (user ID, "me", name, username, or email)',
+      "Which user_ids should receive the manual assignment?",
+    ]);
+    expect(createTestPlan).not.toHaveBeenCalled();
+    expect(assignTestPlan).not.toHaveBeenCalled();
   });
 
   it("returns missing required info details when project_id cannot be resolved", async () => {

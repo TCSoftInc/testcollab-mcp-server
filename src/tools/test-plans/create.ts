@@ -168,6 +168,7 @@ export const createTestPlanTool = {
 Before calling this tool:
 - Ask follow-up questions for missing required information.
 - Do not infer or auto-generate required values like project_id.
+- Assignee information is required. Provide either test_cases.assignee or assignment.user_ids (or assignment.user_ids: ["me"]). If neither is provided, the tool returns MISSING_ASSIGNEE_INFO.
 
 Execution flow:
 1) POST /testplans
@@ -275,7 +276,8 @@ Example:
       },
       test_cases: {
         type: "object",
-        description: "Bulk add test cases to the newly created test plan",
+        description:
+          "Bulk add test cases to the newly created test plan. Provide assignee info either here (test_cases.assignee) or via assignment.user_ids.",
         properties: {
           test_case_ids: {
             type: "array",
@@ -296,7 +298,7 @@ Example:
           assignee: {
             oneOf: [{ type: "number" }, { type: "string" }],
             description:
-              'Assignee for newly added cases (user ID, "me", name, username, or email). If assignment is omitted, this also triggers test-case assignment.',
+              'Assignee for newly added cases (user ID, "me", name, username, or email). Required when assignment.user_ids is not provided.',
           },
         },
       },
@@ -318,7 +320,8 @@ Example:
       },
       assignment: {
         type: "object",
-        description: "Assignment payload to run after plan creation",
+        description:
+          "Assignment payload to run after plan creation. Required when test_cases.assignee is not provided.",
         properties: {
           executor: { type: "string", enum: ["me", "team"] },
           assignment_criteria: {
@@ -965,6 +968,8 @@ const extractMissingRequiredFields = (issues: z.ZodIssue[]): string[] =>
 const missingInfoQuestionByField: Record<string, string> = {
   title: "What should the test plan title be?",
   project_id: "Which project_id should I use?",
+  "test_cases.assignee":
+    'Who should be assigned as test_cases.assignee? (user ID, "me", name, username, or email)',
   "assignment.user_ids": "Which user_ids should receive the manual assignment?",
   "assignment.test_case_ids":
     "Which test_case_ids should be included for manual test case assignment?",
@@ -1132,6 +1137,18 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
   const shouldAddTestCases =
     test_cases !== undefined &&
     (testCaseIds.length > 0 || (testCaseSelector?.length ?? 0) > 0);
+  const hasAnyAssigneeInfo =
+    hasTestCaseAssignee ||
+    assignmentTargetsMe ||
+    assignmentUserIds.length > 0 ||
+    assignmentUserLookups.length > 0;
+  if (!hasAnyAssigneeInfo) {
+    return toMissingInfoError(
+      "MISSING_ASSIGNEE_INFO",
+      "Assignee information is required when creating a test plan. Provide test_cases.assignee or assignment.user_ids.",
+      ["test_cases.assignee", "assignment.user_ids"]
+    );
+  }
   const shouldCreateConfigurations =
     configurations !== undefined && configurations.length > 0;
   const shouldAssignFromTestCaseAssignee =
