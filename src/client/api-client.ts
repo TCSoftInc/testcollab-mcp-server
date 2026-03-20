@@ -629,7 +629,7 @@ export class TestCollabApiClient {
     assignmentMethod: "automatic" | "manual";
     assignment: {
       user: Array<number | "me">;
-      testCases: TestCaseSelectorCollection;
+      testCases: TestCaseSelectorCollection | null;
       configuration: number[] | null;
     };
   }): Promise<Record<string, unknown>> {

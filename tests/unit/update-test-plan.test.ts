@@ -190,9 +190,13 @@ describe("update_test_plan tool", () => {
       project_id: 16,
       suites: [],
       tags: [],
+      test_case_custom_fields: [],
+      test_plan_custom_fields: [],
+      test_plan_configuration_fields: [],
       custom_fields: [],
       requirements: [],
       test_plan_folders: [{ id: 42, title: "Mobile", parent_id: null }],
+      releases: [],
       users: [],
     };
     vi.mocked(getCachedProjectContext).mockReturnValue(cachedContext);
@@ -277,6 +281,48 @@ describe("update_test_plan tool", () => {
           selector: [],
         },
         configuration: null,
+      },
+    });
+  });
+
+  it("sends null testCases for configuration assignment updates", async () => {
+    const assignTestPlan = vi
+      .fn()
+      .mockResolvedValue({ status: true, created_id: 1 });
+    const updateTestPlan = vi.fn();
+    const getTestPlanRaw = vi.fn();
+
+    vi.mocked(getApiClient).mockReturnValue({
+      assignTestPlan,
+      updateTestPlan,
+      getTestPlanRaw,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleUpdateTestPlan({
+      id: 812,
+      assignment: {
+        assignment_criteria: "configuration",
+        assignment_method: "manual",
+        user_ids: [27],
+        configuration_ids: [9001],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(assignTestPlan).toHaveBeenCalledWith({
+      projectId: 16,
+      testplan: 812,
+      executor: "team",
+      assignmentCriteria: "configuration",
+      assignmentMethod: "manual",
+      assignment: {
+        user: [27],
+        testCases: null,
+        configuration: [9001],
       },
     });
   });

@@ -75,15 +75,15 @@ const configurationPairSchema = z.object({
 const assignmentSchema = z.object({
   executor: z
     .enum(["me", "team"])
-    .default("team")
+    .optional()
     .describe("Assignment executor mode"),
   assignment_criteria: z
     .enum(["testCase", "configuration"])
-    .default("testCase")
+    .optional()
     .describe("Assignment criteria"),
   assignment_method: z
     .enum(["automatic", "manual"])
-    .default("automatic")
+    .optional()
     .describe("Assignment method"),
   user_ids: z
     .array(z.union([z.number(), z.string()]))
@@ -188,6 +188,11 @@ Optional:
 - test_cases (test_case_ids/selector/assignee; assignee supports user ID/"me"/name)
 - configurations
 - assignment (supports user IDs/"me"/names; if user says "assign to me", use "me")
+
+Configuration behavior:
+- "configurations" accepts only test plan custom fields with extra.actAsConfig=true.
+- Validation fails with INVALID_CONFIGURATION_FIELD only for invalid fields included in the request payload.
+- For configuration-wise assignment, test plan assigned_to is synced from configuration assignees so summary/list views include all assignees.
 
 Example:
 {
@@ -304,7 +309,8 @@ Example:
       },
       configurations: {
         type: "array",
-        description: "Configuration matrix (array of configuration rows)",
+        description:
+          "Configuration matrix (array of configuration rows). Only fields from test plan custom fields with extra.actAsConfig=true are allowed.",
         items: {
           type: "array",
           items: {
@@ -385,6 +391,14 @@ type CustomFieldDefinition = {
   label?: string;
   fieldType?: string;
   options: OptionLookup[];
+};
+
+type ConfigurationFieldDefinition = {
+  id: number;
+  name: string;
+  label?: string;
+  normalizedName: string;
+  normalizedLabel?: string;
 };
 
 type ProjectUserLookup = {
@@ -567,6 +581,170 @@ const getCompanyIdFromProject = (project: unknown): number | undefined => {
     getField(normalized, "company_id") ??
     getField(normalized, "companyId");
   return extractId(rawCompany);
+};
+
+const parseExtraObject = (extra: unknown): Record<string, unknown> | undefined => {
+  if (!extra) {
+    return undefined;
+  }
+  if (typeof extra === "string") {
+    const trimmed = extra.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+  if (typeof extra === "object") {
+    return extra as Record<string, unknown>;
+  }
+  return undefined;
+};
+
+const toBooleanFlag = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
+  }
+  return undefined;
+};
+
+const hasActAsConfigFlag = (extra: unknown): boolean => {
+  const normalizedExtra = parseExtraObject(extra);
+  if (!normalizedExtra) {
+    return false;
+  }
+  const raw =
+    getField<unknown>(normalizedExtra, "actAsConfig") ??
+    getField<unknown>(normalizedExtra, "act_as_config");
+  return toBooleanFlag(raw) === true;
+};
+
+const toConfigurationFieldDefinition = (
+  id: number,
+  name: string,
+  label?: string
+): ConfigurationFieldDefinition => ({
+  id,
+  name,
+  ...(label ? { label } : {}),
+  normalizedName: normalizeOptionLabel(name),
+  ...(label ? { normalizedLabel: normalizeOptionLabel(label) } : {}),
+});
+
+const dedupeConfigurationFieldDefinitions = (
+  fields: ConfigurationFieldDefinition[]
+): ConfigurationFieldDefinition[] => {
+  const deduped = new Map<number, ConfigurationFieldDefinition>();
+  fields.forEach((field) => {
+    deduped.set(field.id, field);
+  });
+  return Array.from(deduped.values()).sort((a, b) => a.id - b.id);
+};
+
+const mapConfigurationFieldsFromContextRows = (
+  rows: unknown[]
+): ConfigurationFieldDefinition[] =>
+  dedupeConfigurationFieldDefinitions(
+    rows
+      .map((row) => {
+        const id = toNumberId(getField(row, "id"));
+        const name = normalizeString(getField<string>(row, "name"));
+        if (id === undefined || !name) {
+          return null;
+        }
+        const label = normalizeString(getField<string>(row, "label"));
+        return toConfigurationFieldDefinition(id, name, label);
+      })
+      .filter(
+        (row): row is ConfigurationFieldDefinition => row !== null
+      )
+  );
+
+const mapConfigurationFieldsFromProjectContext = (
+  cachedContext: ReturnType<typeof getCachedProjectContext>
+): ConfigurationFieldDefinition[] => {
+  const scopedConfigurationFields = Array.isArray(
+    cachedContext?.test_plan_configuration_fields
+  )
+    ? cachedContext.test_plan_configuration_fields
+    : [];
+  if (scopedConfigurationFields.length > 0) {
+    return mapConfigurationFieldsFromContextRows(scopedConfigurationFields);
+  }
+
+  const testPlanCustomFields = Array.isArray(cachedContext?.test_plan_custom_fields)
+    ? cachedContext.test_plan_custom_fields
+    : [];
+  if (testPlanCustomFields.length === 0) {
+    return [];
+  }
+
+  const fallbackScopedFields = testPlanCustomFields.filter((field) => {
+    const raw =
+      getField<unknown>(field, "act_as_config") ??
+      getField<unknown>(field, "actAsConfig");
+    return toBooleanFlag(raw) === true;
+  });
+  return mapConfigurationFieldsFromContextRows(fallbackScopedFields);
+};
+
+const mapConfigurationFieldsFromCustomFieldList = (
+  customFields: unknown[]
+): ConfigurationFieldDefinition[] =>
+  dedupeConfigurationFieldDefinitions(
+    customFields
+      .map((field) => {
+        const id = toNumberId(getField(field, "id"));
+        const name = normalizeString(getField<string>(field, "name"));
+        if (id === undefined || !name) {
+          return null;
+        }
+        const extra = parseExtraObject(getField<unknown>(field, "extra"));
+        if (!hasActAsConfigFlag(extra)) {
+          return null;
+        }
+        const label = normalizeString(getField<string>(field, "label"));
+        return toConfigurationFieldDefinition(id, name, label);
+      })
+      .filter(
+        (field): field is ConfigurationFieldDefinition => field !== null
+      )
+  );
+
+const isAllowedConfigurationField = (
+  fieldName: string,
+  allowedFields: ConfigurationFieldDefinition[]
+): boolean => {
+  const normalizedField = normalizeOptionLabel(fieldName);
+  return allowedFields.some(
+    (allowedField) =>
+      allowedField.normalizedName === normalizedField ||
+      allowedField.normalizedLabel === normalizedField
+  );
 };
 
 const buildOptionLookup = (optionsRaw: unknown): OptionLookup[] => {
@@ -915,6 +1093,24 @@ const apiFailureMessage = (value: unknown): string | undefined => {
   return undefined;
 };
 
+const toErrorMessage = (value: unknown): string => {
+  if (value instanceof Error) {
+    return value.message;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return "Unknown error";
+};
+
+const isNoAssignableItemsError = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("no testcases found") ||
+    normalized.includes("no configurations found")
+  );
+};
+
 const toToolResponse = (payload: unknown, pretty = false): ToolResponse => ({
   content: [
     {
@@ -1035,6 +1231,24 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
     configurations,
     assignment,
   } = parsed.data;
+  const rawArgs = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const rawAssignment =
+    rawArgs["assignment"] && typeof rawArgs["assignment"] === "object"
+      ? (rawArgs["assignment"] as Record<string, unknown>)
+      : undefined;
+  const hasExplicitAssignmentCriteria =
+    rawAssignment !== undefined &&
+    Object.prototype.hasOwnProperty.call(rawAssignment, "assignment_criteria");
+  const hasConfigurationsInput =
+    configurations !== undefined && configurations.length > 0;
+  const resolvedAssignmentCriteriaInput: "testCase" | "configuration" =
+    assignment === undefined
+      ? "testCase"
+      : hasExplicitAssignmentCriteria
+        ? (assignment.assignment_criteria ?? "testCase")
+        : hasConfigurationsInput
+          ? "configuration"
+          : "testCase";
 
   const normalizedTitle = normalizeString(title) ?? buildDefaultTestPlanTitle();
 
@@ -1098,7 +1312,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
 
   if (
     assignment?.assignment_method === "manual" &&
-    assignment.assignment_criteria === "testCase" &&
+    resolvedAssignmentCriteriaInput === "testCase" &&
     assignmentTestCaseIds.length === 0 &&
     assignmentSelector.length === 0
   ) {
@@ -1111,7 +1325,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
 
   if (
     assignment?.assignment_method === "manual" &&
-    assignment.assignment_criteria === "configuration" &&
+    resolvedAssignmentCriteriaInput === "configuration" &&
     assignmentConfigurationIds.length === 0 &&
     (!configurations || configurations.length === 0)
   ) {
@@ -1149,8 +1363,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       ["test_cases.assignee", "assignment.user_ids"]
     );
   }
-  const shouldCreateConfigurations =
-    configurations !== undefined && configurations.length > 0;
+  const shouldCreateConfigurations = hasConfigurationsInput;
   const shouldAssignFromTestCaseAssignee =
     assignment === undefined &&
     hasTestCaseAssignee &&
@@ -1178,6 +1391,31 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
 
   try {
     const client = getApiClient();
+    let resolvedCompanyId: number | undefined;
+    let hasResolvedCompanyId = false;
+    let testPlanCustomFieldsCache: unknown[] | null = null;
+
+    const ensureCompanyId = async (): Promise<number | undefined> => {
+      if (!hasResolvedCompanyId) {
+        const project = await client.getProject(resolvedProjectId);
+        resolvedCompanyId = getCompanyIdFromProject(project);
+        hasResolvedCompanyId = true;
+      }
+      return resolvedCompanyId;
+    };
+
+    const ensureTestPlanCustomFields = async (): Promise<unknown[]> => {
+      if (testPlanCustomFieldsCache === null) {
+        const companyId = await ensureCompanyId();
+        const fields = await client.listProjectCustomFields(
+          resolvedProjectId,
+          companyId,
+          "TestPlan"
+        );
+        testPlanCustomFieldsCache = Array.isArray(fields) ? fields : [];
+      }
+      return testPlanCustomFieldsCache;
+    };
 
     // Resolve folder (supports ID or title)
     let resolvedFolderId: number | null | undefined;
@@ -1370,6 +1608,60 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       }
     }
 
+    if (shouldCreateConfigurations) {
+      const cachedContext = getCachedProjectContext(resolvedProjectId);
+      let allowedConfigurationFields =
+        mapConfigurationFieldsFromProjectContext(cachedContext);
+
+      const collectInvalidEntries = (
+        allowedFields: ConfigurationFieldDefinition[]
+      ): Array<{ row: number; column: number; field: string }> => {
+        const invalidEntries: Array<{ row: number; column: number; field: string }> = [];
+        (configurations ?? []).forEach((row, rowIndex) => {
+          row.forEach((entry, entryIndex) => {
+            if (!isAllowedConfigurationField(entry.field, allowedFields)) {
+              invalidEntries.push({
+                row: rowIndex + 1,
+                column: entryIndex + 1,
+                field: entry.field,
+              });
+            }
+          });
+        });
+        return invalidEntries;
+      };
+
+      let invalidEntries = collectInvalidEntries(allowedConfigurationFields);
+      if (
+        invalidEntries.length > 0 ||
+        allowedConfigurationFields.length === 0
+      ) {
+        const testPlanCustomFields = await ensureTestPlanCustomFields();
+        const liveConfigurationFields =
+          mapConfigurationFieldsFromCustomFieldList(testPlanCustomFields);
+        allowedConfigurationFields = liveConfigurationFields;
+        invalidEntries = collectInvalidEntries(allowedConfigurationFields);
+      }
+
+      if (invalidEntries.length > 0) {
+        const invalidFieldNames = Array.from(
+          new Set(invalidEntries.map((entry) => entry.field))
+        );
+        return toError(
+          "INVALID_CONFIGURATION_FIELD",
+          `Configuration field(s) not allowed: ${invalidFieldNames.join(", ")}. Only custom fields with extra.actAsConfig=true can be used in configurations.`,
+          {
+            invalid_entries: invalidEntries,
+            allowed_configuration_fields: allowedConfigurationFields.map((field) => ({
+              id: field.id,
+              name: field.name,
+              ...(field.label ? { label: field.label } : {}),
+            })),
+          }
+        );
+      }
+    }
+
     // Resolve custom fields for TestPlan entity
     let resolvedCustomFields:
       | Array<{
@@ -1383,13 +1675,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       | undefined;
 
     if (custom_fields && custom_fields.length > 0) {
-      const project = await client.getProject(resolvedProjectId);
-      const companyId = getCompanyIdFromProject(project);
-      const customFieldList = await client.listProjectCustomFields(
-        resolvedProjectId,
-        companyId,
-        "TestPlan"
-      );
+      const customFieldList = await ensureTestPlanCustomFields();
 
       const definitionsByName = new Map<string, CustomFieldDefinition>();
       const definitionsById = new Map<number, CustomFieldDefinition>();
@@ -1404,7 +1690,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
         const fieldType =
           getField<string>(field, "field_type") ?? getField<string>(field, "type");
         const directOptions = getField<unknown[]>(field, "options");
-        const extra = getField<Record<string, unknown>>(field, "extra");
+        const extra = parseExtraObject(getField<unknown>(field, "extra"));
         const extraOptions = extra ? getField<unknown[]>(extra, "options") : undefined;
         const options = buildOptionLookup(directOptions ?? extraOptions ?? []);
 
@@ -1669,6 +1955,15 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       }
 
       createdConfigurationIds = extractIds(createConfigurationsResult);
+      if (createdConfigurationIds.length === 0) {
+        const listedConfigurations = await client.listTestPlanConfigurations({
+          projectId: resolvedProjectId,
+          testplan: createdPlanId,
+        });
+        createdConfigurationIds = extractIds(
+          Array.isArray(listedConfigurations) ? listedConfigurations : []
+        );
+      }
       steps.add_configurations.status = "completed";
     }
 
@@ -1676,6 +1971,22 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
     let assignResult: Record<string, unknown> | undefined;
     if (shouldAssign) {
       steps.assign_test_plan.status = "in_progress";
+      const planIdForAssignment = createdPlanId;
+      if (planIdForAssignment === undefined) {
+        steps.assign_test_plan.status = "failed";
+        steps.assign_test_plan.detail = "Test plan ID missing before assignment.";
+        return toToolResponse(
+          {
+            error: {
+              code: "INVALID_CREATE_TEST_PLAN_RESPONSE",
+              message: "Test plan ID missing before assignment.",
+              step: "assign_test_plan",
+            },
+            steps,
+          },
+          true
+        );
+      }
 
       const assignFromTestCaseAssignee =
         assignment === undefined &&
@@ -1687,11 +1998,11 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
           : "team"
         : resolvedAssignmentExecutor;
       const assignmentCriteriaForPayload: "testCase" | "configuration" =
-        assignment?.assignment_criteria ?? "testCase";
+        resolvedAssignmentCriteriaInput;
       const assignmentMethodForPayload: "automatic" | "manual" =
         assignment?.assignment_method ?? "automatic";
 
-      const resolvedAssignmentConfigIds =
+      let resolvedAssignmentConfigIds =
         assignmentCriteriaForPayload === "configuration"
           ? assignmentConfigurationIds.length > 0
             ? assignmentConfigurationIds
@@ -1738,45 +2049,409 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
           : assignmentExecutorForPayload === "me"
             ? ["me"]
             : resolvedAssignmentUserIds;
+      const assignmentTestCasesForPayload =
+        assignmentMethodForPayload === "automatic" &&
+        assignmentCriteriaForPayload === "configuration"
+          ? toSelectorCollection([], [])
+          : assignmentCriteriaForPayload === "configuration"
+            ? null
+            : assignFromTestCaseAssignee
+              ? toSelectorCollection(testCaseIds, testCaseSelector)
+              : toSelectorCollection(assignmentTestCaseIds, assignmentSelector);
+      const assignmentConfigurationForPayload =
+        assignmentMethodForPayload === "automatic" &&
+        assignmentCriteriaForPayload === "configuration"
+          ? null
+          : assignmentCriteriaForPayload === "configuration"
+            ? resolvedAssignmentConfigIds
+            : null;
 
-      assignResult = await client.assignTestPlan({
-        projectId: resolvedProjectId,
-        testplan: createdPlanId,
-        executor: assignmentExecutorForPayload,
-        assignmentCriteria: assignmentCriteriaForPayload,
-        assignmentMethod: assignmentMethodForPayload,
-        assignment: {
-          user: assignmentUsersForPayload,
-          testCases: assignFromTestCaseAssignee
-            ? toSelectorCollection(testCaseIds, testCaseSelector)
-            : toSelectorCollection(assignmentTestCaseIds, assignmentSelector),
-          configuration:
-            assignmentCriteriaForPayload === "configuration"
-              ? resolvedAssignmentConfigIds
-              : null,
-        },
-      });
-
-      const assignFailure = apiFailureMessage(assignResult);
-      if (assignFailure) {
-        steps.assign_test_plan.status = "failed";
-        steps.assign_test_plan.detail = assignFailure;
-        return toToolResponse(
-          {
-            error: {
-              code: "ASSIGN_TEST_PLAN_FAILED",
-              message: assignFailure,
-              step: "assign_test_plan",
-            },
-            testPlan: {
-              id: createdPlanId,
-              title: createdPlanTitle,
-              project_id: resolvedProjectId,
-            },
-            steps,
+      const assignWithPayload = async (
+        configurationIds: number[] | null
+      ): Promise<Record<string, unknown>> =>
+        client.assignTestPlan({
+          projectId: resolvedProjectId,
+          testplan: planIdForAssignment,
+          executor: assignmentExecutorForPayload,
+          assignmentCriteria: assignmentCriteriaForPayload,
+          assignmentMethod: assignmentMethodForPayload,
+          assignment: {
+            user: assignmentUsersForPayload,
+            testCases: assignmentTestCasesForPayload,
+            configuration:
+              assignmentCriteriaForPayload === "configuration"
+                ? (assignmentMethodForPayload === "automatic" &&
+                  assignmentCriteriaForPayload === "configuration"
+                    ? assignmentConfigurationForPayload
+                    : configurationIds)
+                : null,
           },
-          true
+        });
+
+      let assignUsedFallback = false;
+      try {
+        assignResult = await assignWithPayload(
+          assignmentCriteriaForPayload === "configuration"
+            ? assignmentConfigurationForPayload
+            : null
         );
+      } catch (assignError) {
+        let assignErrorMessage = toErrorMessage(assignError);
+        if (
+          assignmentCriteriaForPayload === "configuration" &&
+          isNoAssignableItemsError(assignErrorMessage)
+        ) {
+          const listedConfigurations = await client.listTestPlanConfigurations({
+            projectId: resolvedProjectId,
+            testplan: planIdForAssignment,
+          });
+          const refreshedConfigIds = extractIds(
+            Array.isArray(listedConfigurations) ? listedConfigurations : []
+          );
+          if (refreshedConfigIds.length > 0) {
+            resolvedAssignmentConfigIds = refreshedConfigIds;
+            try {
+              assignResult = await assignWithPayload(
+                assignmentMethodForPayload === "automatic"
+                  ? null
+                  : resolvedAssignmentConfigIds
+              );
+            } catch (retryError) {
+              assignErrorMessage = toErrorMessage(retryError);
+            }
+          }
+        }
+
+        let retryRecovered = false;
+        if (assignResult !== undefined) {
+          const retryAssignFailure = apiFailureMessage(assignResult);
+          if (!retryAssignFailure) {
+            retryRecovered = true;
+          } else {
+            assignErrorMessage = retryAssignFailure;
+          }
+        }
+
+        if (!retryRecovered) {
+          const shouldFallbackToPlanAssignees =
+            assignmentCriteriaForPayload === "testCase" &&
+            assignmentMethodForPayload === "automatic" &&
+            assignmentExecutorForPayload === "team" &&
+            isNoAssignableItemsError(assignErrorMessage);
+
+          if (!shouldFallbackToPlanAssignees) {
+            throw new Error(assignErrorMessage);
+          }
+
+          let fallbackAssigneeIds = assignmentUsersForPayload.filter(
+            (user): user is number => typeof user === "number"
+          );
+
+          if (fallbackAssigneeIds.length === 0) {
+            const fallbackUsersRaw = await client.listProjectUsers(resolvedProjectId);
+            const fallbackUsers = mapProjectUsersForLookup(
+              Array.isArray(fallbackUsersRaw) ? fallbackUsersRaw : []
+            );
+            fallbackAssigneeIds = fallbackUsers.map((user) => user.id);
+          }
+
+          fallbackAssigneeIds = dedupeNumbers(fallbackAssigneeIds);
+
+          if (fallbackAssigneeIds.length === 0) {
+            steps.assign_test_plan.status = "failed";
+            steps.assign_test_plan.detail = assignErrorMessage;
+            return toToolResponse(
+              {
+                error: {
+                  code: "ASSIGN_TEST_PLAN_FAILED",
+                  message: assignErrorMessage,
+                  step: "assign_test_plan",
+                },
+                testPlan: {
+                  id: createdPlanId,
+                  title: createdPlanTitle,
+                  project_id: resolvedProjectId,
+                },
+                steps,
+              },
+              true
+            );
+          }
+
+          const fallbackExistingRaw = await client.getTestPlanRaw(planIdForAssignment);
+          const fallbackExisting = unwrapApiData(fallbackExistingRaw);
+          const fallbackTitle = normalizeString(getField<string>(fallbackExisting, "title"));
+          const fallbackPriority = toNumberId(getField(fallbackExisting, "priority"));
+          const fallbackStatus = toNumberId(getField(fallbackExisting, "status"));
+          const fallbackFolderRaw =
+            getField(fallbackExisting, "test_plan_folder") ??
+            getField(fallbackExisting, "testPlanFolder");
+          const fallbackFolderId =
+            fallbackFolderRaw === null
+              ? null
+              : extractId(fallbackFolderRaw) ?? toNumberId(fallbackFolderRaw);
+          const fallbackReleaseRaw = getField(fallbackExisting, "release");
+          const fallbackReleaseId =
+            fallbackReleaseRaw === null
+              ? null
+              : extractId(fallbackReleaseRaw) ?? toNumberId(fallbackReleaseRaw);
+
+          if (!fallbackTitle || fallbackPriority === undefined || fallbackStatus === undefined) {
+            steps.assign_test_plan.status = "failed";
+            steps.assign_test_plan.detail =
+              "Unable to resolve required test plan fields for fallback assignment update.";
+            return toToolResponse(
+              {
+                error: {
+                  code: "ASSIGN_TEST_PLAN_FAILED",
+                  message:
+                    "Unable to resolve required test plan fields for fallback assignment update.",
+                  step: "assign_test_plan",
+                  details: {
+                    missing: [
+                      ...(!fallbackTitle ? ["title"] : []),
+                      ...(fallbackPriority === undefined ? ["priority"] : []),
+                      ...(fallbackStatus === undefined ? ["status"] : []),
+                    ],
+                  },
+                },
+                testPlan: {
+                  id: createdPlanId,
+                  title: createdPlanTitle,
+                  project_id: resolvedProjectId,
+                },
+                steps,
+              },
+              true
+            );
+          }
+
+          const fallbackUpdateResult = await client.updateTestPlan(planIdForAssignment, {
+            projectId: resolvedProjectId,
+            title: fallbackTitle,
+            priority: fallbackPriority,
+            status: fallbackStatus,
+            testPlanFolderId: fallbackFolderId ?? null,
+            ...(fallbackReleaseId !== undefined ? { release: fallbackReleaseId } : {}),
+            assignmentMethod: assignmentMethodForPayload,
+            assignmentCriteria: assignmentCriteriaForPayload,
+            assignedTo: fallbackAssigneeIds,
+          });
+
+          const fallbackUpdateFailure = apiFailureMessage(fallbackUpdateResult);
+          if (fallbackUpdateFailure) {
+            steps.assign_test_plan.status = "failed";
+            steps.assign_test_plan.detail = fallbackUpdateFailure;
+            return toToolResponse(
+              {
+                error: {
+                  code: "ASSIGN_TEST_PLAN_FAILED",
+                  message: fallbackUpdateFailure,
+                  step: "assign_test_plan",
+                },
+                testPlan: {
+                  id: createdPlanId,
+                  title: createdPlanTitle,
+                  project_id: resolvedProjectId,
+                },
+                steps,
+              },
+              true
+            );
+          }
+
+          assignUsedFallback = true;
+          assignResult = {
+            status: true,
+            fallback_assignment: true,
+            assign_error: assignErrorMessage,
+            assigned_to: fallbackAssigneeIds,
+          };
+        }
+      }
+
+      if (!assignUsedFallback) {
+        const assignFailure = apiFailureMessage(assignResult);
+        if (assignFailure) {
+          steps.assign_test_plan.status = "failed";
+          steps.assign_test_plan.detail = assignFailure;
+          return toToolResponse(
+            {
+              error: {
+                code: "ASSIGN_TEST_PLAN_FAILED",
+                message: assignFailure,
+                step: "assign_test_plan",
+              },
+              testPlan: {
+                id: createdPlanId,
+                title: createdPlanTitle,
+                project_id: resolvedProjectId,
+              },
+              steps,
+            },
+            true
+          );
+        }
+      }
+
+      // Ensure summary/list assignees reflect configuration-wise assignment results.
+      if (!assignUsedFallback && assignmentCriteriaForPayload === "configuration") {
+        const listConfigurationsFn = (
+          client as unknown as {
+            listTestPlanConfigurations?: (params: {
+              projectId: number;
+              testplan: number;
+              limit?: number;
+              start?: number;
+              sort?: string;
+              filter?: Record<string, unknown>;
+            }) => Promise<Array<Record<string, unknown>>>;
+          }
+        ).listTestPlanConfigurations;
+        const getTestPlanRawFn = (
+          client as unknown as {
+            getTestPlanRaw?: (id: number) => Promise<Record<string, unknown>>;
+          }
+        ).getTestPlanRaw;
+        const updateTestPlanFn = (
+          client as unknown as {
+            updateTestPlan?: (
+              id: number,
+              data: {
+                projectId: number;
+                title: string;
+                priority: number;
+                status: number;
+                testPlanFolderId: number | null;
+                assignmentMethod?: "automatic" | "manual";
+                assignmentCriteria?: "testCase" | "configuration";
+                assignedTo?: number[];
+                release?: number | null;
+              }
+            ) => Promise<Record<string, unknown>>;
+          }
+        ).updateTestPlan;
+
+        if (
+          typeof listConfigurationsFn === "function" &&
+          typeof getTestPlanRawFn === "function" &&
+          typeof updateTestPlanFn === "function"
+        ) {
+          let syncedAssigneeIds = dedupeNumbers(
+            assignmentUsersForPayload.filter(
+              (user): user is number => typeof user === "number"
+            )
+          );
+
+          const listedConfigurationsForSync = await listConfigurationsFn({
+            projectId: resolvedProjectId,
+            testplan: planIdForAssignment,
+          });
+          const configurationAssigneeIds = dedupeNumbers(
+            (Array.isArray(listedConfigurationsForSync)
+              ? listedConfigurationsForSync
+              : []
+            )
+              .map((configuration) => {
+                const assignedToRaw =
+                  getField<unknown>(configuration, "assigned_to") ??
+                  getField<unknown>(configuration, "assignedTo");
+                return extractId(assignedToRaw) ?? toNumberId(assignedToRaw);
+              })
+              .filter(
+                (assigneeId): assigneeId is number =>
+                  assigneeId !== undefined && assigneeId > 0
+              )
+          );
+
+          if (configurationAssigneeIds.length > 0) {
+            syncedAssigneeIds = configurationAssigneeIds;
+          }
+
+          if (syncedAssigneeIds.length > 0) {
+            const syncExistingRaw = await getTestPlanRawFn(planIdForAssignment);
+            const syncExisting = unwrapApiData(syncExistingRaw);
+            const syncTitle = normalizeString(getField<string>(syncExisting, "title"));
+            const syncPriority = toNumberId(getField(syncExisting, "priority"));
+            const syncStatus = toNumberId(getField(syncExisting, "status"));
+            const syncFolderRaw =
+              getField(syncExisting, "test_plan_folder") ??
+              getField(syncExisting, "testPlanFolder");
+            const syncFolderId =
+              syncFolderRaw === null
+                ? null
+                : extractId(syncFolderRaw) ?? toNumberId(syncFolderRaw);
+            const syncReleaseRaw = getField(syncExisting, "release");
+            const syncReleaseId =
+              syncReleaseRaw === null
+                ? null
+                : extractId(syncReleaseRaw) ?? toNumberId(syncReleaseRaw);
+
+            if (!syncTitle || syncPriority === undefined || syncStatus === undefined) {
+              steps.assign_test_plan.status = "failed";
+              steps.assign_test_plan.detail =
+                "Unable to resolve required test plan fields for assigned_to sync.";
+              return toToolResponse(
+                {
+                  error: {
+                    code: "ASSIGN_TEST_PLAN_FAILED",
+                    message:
+                      "Unable to resolve required test plan fields for assigned_to sync.",
+                    step: "assign_test_plan",
+                    details: {
+                      missing: [
+                        ...(!syncTitle ? ["title"] : []),
+                        ...(syncPriority === undefined ? ["priority"] : []),
+                        ...(syncStatus === undefined ? ["status"] : []),
+                      ],
+                    },
+                  },
+                  testPlan: {
+                    id: createdPlanId,
+                    title: createdPlanTitle,
+                    project_id: resolvedProjectId,
+                  },
+                  steps,
+                },
+                true
+              );
+            }
+
+            const syncUpdateResult = await updateTestPlanFn(planIdForAssignment, {
+              projectId: resolvedProjectId,
+              title: syncTitle,
+              priority: syncPriority,
+              status: syncStatus,
+              testPlanFolderId: syncFolderId ?? null,
+              ...(syncReleaseId !== undefined ? { release: syncReleaseId } : {}),
+              assignmentMethod: assignmentMethodForPayload,
+              assignmentCriteria: assignmentCriteriaForPayload,
+              assignedTo: syncedAssigneeIds,
+            });
+
+            const syncUpdateFailure = apiFailureMessage(syncUpdateResult);
+            if (syncUpdateFailure) {
+              steps.assign_test_plan.status = "failed";
+              steps.assign_test_plan.detail = syncUpdateFailure;
+              return toToolResponse(
+                {
+                  error: {
+                    code: "ASSIGN_TEST_PLAN_FAILED",
+                    message: syncUpdateFailure,
+                    step: "assign_test_plan",
+                  },
+                  testPlan: {
+                    id: createdPlanId,
+                    title: createdPlanTitle,
+                    project_id: resolvedProjectId,
+                  },
+                  steps,
+                },
+                true
+              );
+            }
+          }
+        }
       }
 
       steps.assign_test_plan.status = "completed";

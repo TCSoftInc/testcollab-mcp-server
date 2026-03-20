@@ -56,8 +56,16 @@ describe("create_test_plan tool", () => {
         label: "Browser",
         type: "dropdown",
         extra: {
+          actAsConfig: true,
           options: [{ label: "Chrome", id: "1" }],
         },
+      },
+      {
+        id: 14,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
       },
     ]);
     const createTestPlan = vi
@@ -178,9 +186,13 @@ describe("create_test_plan tool", () => {
       project_id: 16,
       suites: [],
       tags: [],
+      test_case_custom_fields: [],
+      test_plan_custom_fields: [],
+      test_plan_configuration_fields: [],
       custom_fields: [],
       requirements: [],
       test_plan_folders: [{ id: 42, title: "Mobile", parent_id: null }],
+      releases: [],
       users: [],
     };
     vi.mocked(getCachedProjectContext).mockReturnValue(cachedContext);
@@ -664,8 +676,319 @@ describe("create_test_plan tool", () => {
     );
   });
 
+  it("sends null testCases for configuration-based assignment", async () => {
+    const createTestPlan = vi.fn().mockResolvedValue({ id: 889, title: "Plan B" });
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      {
+        id: 15,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
+      },
+    ]);
+    const createTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9001 }]);
+    const assignTestPlan = vi.fn().mockResolvedValue({ status: true, created_id: 1 });
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      getProject,
+      listProjectCustomFields,
+      createTestPlanConfigurations,
+      assignTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Plan B",
+      project_id: 16,
+      configurations: [[{ field: "OS", value: "Windows" }]],
+      assignment: {
+        assignment_criteria: "configuration",
+        assignment_method: "manual",
+        user_ids: [27],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+      steps: Record<string, { status: string }>;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(payload.steps.add_configurations.status).toBe("completed");
+    expect(payload.steps.assign_test_plan.status).toBe("completed");
+    expect(assignTestPlan).toHaveBeenCalledWith({
+      projectId: 16,
+      testplan: 889,
+      executor: "team",
+      assignmentCriteria: "configuration",
+      assignmentMethod: "manual",
+      assignment: {
+        user: [27],
+        testCases: null,
+        configuration: [9001],
+      },
+    });
+  });
+
+  it("uses empty test case selector and null configuration for automatic configuration assignment", async () => {
+    const createTestPlan = vi.fn().mockResolvedValue({ id: 892, title: "Plan E" });
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      {
+        id: 15,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
+      },
+    ]);
+    const createTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9004 }]);
+    const assignTestPlan = vi.fn().mockResolvedValue({ status: true, created_id: 1 });
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      getProject,
+      listProjectCustomFields,
+      createTestPlanConfigurations,
+      assignTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Plan E",
+      project_id: 16,
+      configurations: [[{ field: "OS", value: "Windows" }]],
+      assignment: {
+        assignment_criteria: "configuration",
+        assignment_method: "automatic",
+        user_ids: [27, 31],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(assignTestPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignmentCriteria: "configuration",
+        assignmentMethod: "automatic",
+        assignment: expect.objectContaining({
+          testCases: { testCases: [], selector: [] },
+          configuration: null,
+        }),
+      })
+    );
+  });
+
+  it("syncs test plan assigned_to with all configuration assignees", async () => {
+    const createTestPlan = vi.fn().mockResolvedValue({ id: 893, title: "Plan F" });
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      {
+        id: 15,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
+      },
+    ]);
+    const createTestPlanConfigurations = vi
+      .fn()
+      .mockResolvedValue([{ id: 9101 }, { id: 9102 }]);
+    const assignTestPlan = vi.fn().mockResolvedValue({ status: true, created_id: 1 });
+    const listTestPlanConfigurations = vi.fn().mockResolvedValue([
+      { id: 9101, assigned_to: 27 },
+      { id: 9102, assigned_to: 31 },
+    ]);
+    const getTestPlanRaw = vi.fn().mockResolvedValue({
+      id: 893,
+      title: "Plan F",
+      priority: 1,
+      status: 1,
+      test_plan_folder: null,
+      release: null,
+    });
+    const updateTestPlan = vi.fn().mockResolvedValue({ status: true });
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      getProject,
+      listProjectCustomFields,
+      createTestPlanConfigurations,
+      assignTestPlan,
+      listTestPlanConfigurations,
+      getTestPlanRaw,
+      updateTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Plan F",
+      project_id: 16,
+      priority: 1,
+      configurations: [
+        [{ field: "OS", value: "Windows" }],
+        [{ field: "OS", value: "Linux" }],
+      ],
+      assignment: {
+        assignment_criteria: "configuration",
+        assignment_method: "automatic",
+        user_ids: [27, 31],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+      steps: Record<string, { status: string }>;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(payload.steps.assign_test_plan.status).toBe("completed");
+    expect(assignTestPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignmentCriteria: "configuration",
+        assignmentMethod: "automatic",
+        assignment: expect.objectContaining({
+          user: [27, 31],
+          testCases: { testCases: [], selector: [] },
+          configuration: null,
+        }),
+      })
+    );
+    expect(updateTestPlan).toHaveBeenCalledWith(
+      893,
+      expect.objectContaining({
+        projectId: 16,
+        title: "Plan F",
+        priority: 1,
+        status: 1,
+        testPlanFolderId: null,
+        assignmentMethod: "automatic",
+        assignmentCriteria: "configuration",
+        assignedTo: [27, 31],
+      })
+    );
+  });
+
+  it("infers configuration assignment criteria when configurations are provided and criteria is omitted", async () => {
+    const createTestPlan = vi.fn().mockResolvedValue({ id: 891, title: "Plan D" });
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      {
+        id: 15,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
+      },
+    ]);
+    const createTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9003 }]);
+    const assignTestPlan = vi.fn().mockResolvedValue({ status: true, created_id: 1 });
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      getProject,
+      listProjectCustomFields,
+      createTestPlanConfigurations,
+      assignTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Plan D",
+      project_id: 16,
+      configurations: [[{ field: "OS", value: "Linux" }]],
+      assignment: {
+        assignment_method: "manual",
+        user_ids: [27],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(assignTestPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignmentCriteria: "configuration",
+        assignmentMethod: "manual",
+        assignment: expect.objectContaining({
+          testCases: null,
+          configuration: [9003],
+        }),
+      })
+    );
+  });
+
+  it("retries configuration assignment when initial assign reports missing configurations", async () => {
+    const createTestPlan = vi.fn().mockResolvedValue({ id: 890, title: "Plan C" });
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      {
+        id: 15,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
+      },
+    ]);
+    const createTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9002 }]);
+    const listTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9002 }]);
+    const assignTestPlan = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          'API request failed: 404 Not Found - {"statusCode":404,"error":"Not Found","message":"No configurations found"}'
+        )
+      )
+      .mockResolvedValueOnce({ status: true, created_id: 1 });
+    const updateTestPlan = vi.fn();
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      getProject,
+      listProjectCustomFields,
+      createTestPlanConfigurations,
+      listTestPlanConfigurations,
+      assignTestPlan,
+      updateTestPlan,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Plan C",
+      project_id: 16,
+      priority: 1,
+      configurations: [[{ field: "OS", value: "Windows" }]],
+      assignment: {
+        assignment_criteria: "configuration",
+        assignment_method: "automatic",
+        user_ids: [27],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      success: boolean;
+    };
+
+    expect(payload.success).toBe(true);
+    expect(assignTestPlan).toHaveBeenCalledTimes(2);
+    expect(updateTestPlan).not.toHaveBeenCalled();
+  });
+
   it("returns partial failure if add_test_cases step fails and stops subsequent steps", async () => {
     const createTestPlan = vi.fn().mockResolvedValue({ id: 888, title: "Plan A" });
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      {
+        id: 15,
+        name: "os",
+        label: "OS",
+        type: "text",
+        extra: { actAsConfig: true },
+      },
+    ]);
     const bulkAddTestPlanTestCases = vi
       .fn()
       .mockResolvedValue({ status: false, message: "No valid test cases provided" });
@@ -674,6 +997,8 @@ describe("create_test_plan tool", () => {
 
     vi.mocked(getApiClient).mockReturnValue({
       createTestPlan,
+      getProject,
+      listProjectCustomFields,
       bulkAddTestPlanTestCases,
       createTestPlanConfigurations,
       assignTestPlan,
@@ -711,5 +1036,46 @@ describe("create_test_plan tool", () => {
     expect(bulkAddTestPlanTestCases).toHaveBeenCalledTimes(1);
     expect(createTestPlanConfigurations).not.toHaveBeenCalled();
     expect(assignTestPlan).not.toHaveBeenCalled();
+  });
+
+  it("returns INVALID_CONFIGURATION_FIELD when configuration field is not actAsConfig", async () => {
+    const createTestPlan = vi.fn();
+    const getProject = vi.fn().mockResolvedValue({ company: { id: 9 } });
+    const listProjectCustomFields = vi.fn().mockResolvedValue([
+      { id: 12, name: "build", label: "Build", type: "text" },
+      {
+        id: 13,
+        name: "browser",
+        label: "Browser",
+        type: "dropdown",
+        extra: { actAsConfig: true },
+      },
+    ]);
+
+    vi.mocked(getApiClient).mockReturnValue({
+      createTestPlan,
+      getProject,
+      listProjectCustomFields,
+    } as unknown as ReturnType<typeof getApiClient>);
+
+    const response = await handleCreateTestPlan({
+      title: "Config validation",
+      project_id: 16,
+      configurations: [[{ field: "Build", value: "2.9.0-rc1" }]],
+      assignment: {
+        assignment_criteria: "testCase",
+        assignment_method: "automatic",
+        user_ids: [27],
+      },
+    });
+
+    const payload = JSON.parse(response.content[0].text) as {
+      error: {
+        code: string;
+      };
+    };
+
+    expect(payload.error.code).toBe("INVALID_CONFIGURATION_FIELD");
+    expect(createTestPlan).not.toHaveBeenCalled();
   });
 });

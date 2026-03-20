@@ -1491,6 +1491,10 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
         resolvedAssignmentExecutor === "me"
           ? ["me"]
           : resolvedAssignmentUserIds;
+      const assignmentTestCasesForPayload =
+        assignmentCriteria === "configuration"
+          ? null
+          : toSelectorCollection(assignmentTestCaseIds, assignmentSelector);
 
       let assignUsedFallback = false;
       try {
@@ -1502,7 +1506,7 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
           assignmentMethod,
           assignment: {
             user: assignmentUsersForPayload,
-            testCases: toSelectorCollection(assignmentTestCaseIds, assignmentSelector),
+            testCases: assignmentTestCasesForPayload,
             configuration:
               assignmentCriteria === "configuration"
                 ? assignmentConfigurationIds

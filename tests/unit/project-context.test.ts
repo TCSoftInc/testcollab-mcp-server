@@ -72,6 +72,7 @@ describe("project context resource", () => {
         label: "Browser",
         type: "dropdown",
         extra: {
+          actAsConfig: true,
           options: [
             { label: "Chrome", systemValue: 1 },
             { label: "Firefox", systemValue: 2 },
@@ -131,8 +132,16 @@ describe("project context resource", () => {
       name: "browser",
       label: "Browser",
       field_type: "dropdown",
+      act_as_config: true,
       options: ["Chrome", "Firefox"],
     });
+    expect(payload.test_plan_configuration_fields).toEqual([
+      expect.objectContaining({
+        id: 100,
+        name: "browser",
+        act_as_config: true,
+      }),
+    ]);
     expect(payload.test_plan_folders).toEqual([
       {
         id: 42,

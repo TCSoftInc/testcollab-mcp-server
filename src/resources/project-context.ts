@@ -28,6 +28,7 @@ type CustomFieldNode = {
   label?: string;
   field_type?: string;
   options?: string[];
+  act_as_config?: boolean;
   entity?: "TestCase" | "TestPlan";
 };
 
@@ -67,6 +68,7 @@ type ProjectContextPayload = {
   tags: TagNode[];
   test_case_custom_fields: CustomFieldNode[];
   test_plan_custom_fields: CustomFieldNode[];
+  test_plan_configuration_fields: CustomFieldNode[];
   custom_fields: CustomFieldNode[];
   requirements: RequirementNode[];
   test_plan_folders: TestPlanFolderNode[];
@@ -81,7 +83,7 @@ type CacheEntry = {
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const contextCache = new Map<string, CacheEntry>();
-const PROJECT_CONTEXT_SCHEMA_VERSION = "v3";
+const PROJECT_CONTEXT_SCHEMA_VERSION = "v4";
 
 const cacheTtlMs = (() => {
   const raw = process.env["TC_PROJECT_CONTEXT_CACHE_TTL_MS"];
@@ -159,8 +161,69 @@ const hasEntityScopedCustomFields = (payload: unknown): boolean => {
   const record = payload as Record<string, unknown>;
   return (
     Array.isArray(record["test_case_custom_fields"]) &&
-    Array.isArray(record["test_plan_custom_fields"])
+    Array.isArray(record["test_plan_custom_fields"]) &&
+    Array.isArray(record["test_plan_configuration_fields"])
   );
+};
+
+const parseExtraObject = (extra: unknown): Record<string, unknown> | undefined => {
+  if (!extra) {
+    return undefined;
+  }
+  if (typeof extra === "string") {
+    const trimmed = extra.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+  if (typeof extra === "object") {
+    return extra as Record<string, unknown>;
+  }
+  return undefined;
+};
+
+const toBooleanFlag = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
+  }
+  return undefined;
+};
+
+const extractActAsConfig = (extra: unknown): boolean | undefined => {
+  const normalizedExtra = parseExtraObject(extra);
+  if (!normalizedExtra) {
+    return undefined;
+  }
+  const actAsConfigRaw =
+    getField<unknown>(normalizedExtra, "actAsConfig") ??
+    getField<unknown>(normalizedExtra, "act_as_config");
+  return toBooleanFlag(actAsConfigRaw);
 };
 
 const extractCustomFieldOptions = (extra: unknown): string[] | undefined => {
@@ -380,8 +443,9 @@ const mapCustomFields = (
       const label = getField<string>(field, "label");
       const fieldType =
         getField<string>(field, "field_type") ?? getField<string>(field, "type");
-      const extra = getField<Record<string, unknown>>(field, "extra");
+      const extra = parseExtraObject(getField<unknown>(field, "extra"));
       const options = extractCustomFieldOptions(extra);
+      const actAsConfig = extractActAsConfig(extra);
       const shouldIncludeOptions =
         fieldType === "dropdown" || fieldType === "multipleSelect";
 
@@ -390,6 +454,7 @@ const mapCustomFields = (
         name,
         ...(label ? { label } : {}),
         ...(fieldType ? { field_type: fieldType } : {}),
+        ...(actAsConfig !== undefined ? { act_as_config: actAsConfig } : {}),
         ...(entity ? { entity } : {}),
         ...(shouldIncludeOptions
           ? { options: options ?? [] }
@@ -689,6 +754,9 @@ export async function handleProjectContext(
       Array.isArray(testPlanCustomFieldsList) ? testPlanCustomFieldsList : [],
       "TestPlan"
     );
+    const test_plan_configuration_fields = test_plan_custom_fields.filter(
+      (field) => field.act_as_config === true
+    );
     // Backward-compatibility alias retained for existing consumers.
     const custom_fields = test_case_custom_fields;
     const test_plan_folders = mapTestPlanFolders(
@@ -709,6 +777,7 @@ export async function handleProjectContext(
       tags,
       test_case_custom_fields,
       test_plan_custom_fields,
+      test_plan_configuration_fields,
       custom_fields,
       requirements,
       test_plan_folders,
@@ -725,7 +794,7 @@ export async function handleProjectContext(
 
     const durationMs = Date.now() - startTime;
     console.log(
-      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, test_case_custom_fields: ${test_case_custom_fields.length}, test_plan_custom_fields: ${test_plan_custom_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, releases: ${releases.length}, users: ${users.length})`
+      `${logPrefix} Project context ready for ${projectId} in ${durationMs}ms (suites: ${suites.length}, tags: ${tags.length}, test_case_custom_fields: ${test_case_custom_fields.length}, test_plan_custom_fields: ${test_plan_custom_fields.length}, test_plan_configuration_fields: ${test_plan_configuration_fields.length}, requirements: ${requirements.length}, test_plan_folders: ${test_plan_folders.length}, releases: ${releases.length}, users: ${users.length})`
     );
 
     return {

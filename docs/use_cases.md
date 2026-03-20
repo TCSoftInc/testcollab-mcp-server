@@ -31,7 +31,7 @@ claude mcp add testcollab \
 | Tool | Description |
 |------|-------------|
 | `list_test_plans` | List test plans with filtering/sorting, including release ID/title filters |
-| `create_test_plan` | Create a test plan with cases, configurations, assignment, and optional release association (requires assignee info via `test_cases.assignee` or `assignment.user_ids`) |
+| `create_test_plan` | Create a test plan with cases, configurations, assignment, and optional release association (requires assignee info via `test_cases.assignee` or `assignment.user_ids`; configuration fields must come from custom fields with `extra.actAsConfig=true`) |
 | `update_test_plan` | Update test plan metadata, status, assignment, and release association |
 | `delete_test_plan` | Delete a test plan |
 
@@ -548,6 +548,10 @@ These use cases show how developers use TestCollab through AI assistants during 
 2. Creates a test plan with those cases and automatic assignment
 
 **Important:** `create_test_plan` requires assignee information. If neither `test_cases.assignee` nor `assignment.user_ids` is provided, the tool returns `MISSING_ASSIGNEE_INFO`.
+
+**Configuration notes (create_test_plan):**
+- Validation fails with `INVALID_CONFIGURATION_FIELD` only when the request includes fields not marked `extra.actAsConfig=true`.
+- For configuration-wise assignment, the tool syncs test plan `assigned_to` from configuration assignees so Summary/List show all assigned users.
 
 **Tool calls:**
 ```json

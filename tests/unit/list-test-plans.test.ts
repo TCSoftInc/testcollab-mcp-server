@@ -136,9 +136,13 @@ describe("list_test_plans tool", () => {
       project_id: 16,
       suites: [],
       tags: [],
+      test_case_custom_fields: [],
+      test_plan_custom_fields: [],
+      test_plan_configuration_fields: [],
       custom_fields: [],
       requirements: [],
       test_plan_folders: [{ id: 42, title: "Mobile", parent_id: null }],
+      releases: [],
       users: [],
     };
     vi.mocked(getCachedProjectContext).mockReturnValue(cachedContext);
