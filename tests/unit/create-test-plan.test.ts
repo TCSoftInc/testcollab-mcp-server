@@ -691,11 +691,14 @@ describe("create_test_plan tool", () => {
     const createTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9001 }]);
     const assignTestPlan = vi.fn().mockResolvedValue({ status: true, created_id: 1 });
 
+    const updateTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9001 }]);
+
     vi.mocked(getApiClient).mockReturnValue({
       createTestPlan,
       getProject,
       listProjectCustomFields,
       createTestPlanConfigurations,
+      updateTestPlanConfigurations,
       assignTestPlan,
     } as unknown as ReturnType<typeof getApiClient>);
 
@@ -887,11 +890,14 @@ describe("create_test_plan tool", () => {
     const createTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9003 }]);
     const assignTestPlan = vi.fn().mockResolvedValue({ status: true, created_id: 1 });
 
+    const updateTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9003 }]);
+
     vi.mocked(getApiClient).mockReturnValue({
       createTestPlan,
       getProject,
       listProjectCustomFields,
       createTestPlanConfigurations,
+      updateTestPlanConfigurations,
       assignTestPlan,
     } as unknown as ReturnType<typeof getApiClient>);
 

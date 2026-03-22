@@ -102,7 +102,9 @@ const assignmentSchema = z.object({
   configuration_ids: z
     .array(z.union([z.number(), z.string()]))
     .optional()
-    .describe("Configuration IDs for configuration-level assignment"),
+    .describe(
+      "Configuration IDs for configuration-level assignment. When configurations are created in the same call, use 0-based indices (e.g. [0, 1]) to reference them. Each index maps positionally to user_ids (user_ids[i] is assigned to configuration_ids[i])."
+    ),
 });
 
 export const createTestPlanSchema = z.object({
@@ -2002,12 +2004,31 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       const assignmentMethodForPayload: "automatic" | "manual" =
         assignment?.assignment_method ?? "automatic";
 
-      let resolvedAssignmentConfigIds =
-        assignmentCriteriaForPayload === "configuration"
-          ? assignmentConfigurationIds.length > 0
-            ? assignmentConfigurationIds
-            : createdConfigurationIds
-          : [];
+      // Resolve configuration IDs: when configs were created in this call,
+      // treat configuration_ids as 0-based indices into the created configurations.
+      let resolvedAssignmentConfigIds: number[];
+      if (assignmentCriteriaForPayload === "configuration") {
+        if (
+          assignmentConfigurationIds.length > 0 &&
+          createdConfigurationIds.length > 0
+        ) {
+          // Treat configuration_ids as indices into the created configurations
+          resolvedAssignmentConfigIds = assignmentConfigurationIds.map((idx) => {
+            const resolvedId = createdConfigurationIds[idx];
+            // If index is valid, use the resolved ID; otherwise use the value as-is
+            // (it may be an actual DB ID for a pre-existing configuration)
+            return resolvedId !== undefined ? resolvedId : idx;
+          });
+        } else if (assignmentConfigurationIds.length > 0) {
+          // No configs created in this call — use as actual DB IDs
+          resolvedAssignmentConfigIds = assignmentConfigurationIds;
+        } else {
+          // No explicit config IDs — use all created config IDs
+          resolvedAssignmentConfigIds = createdConfigurationIds;
+        }
+      } else {
+        resolvedAssignmentConfigIds = [];
+      }
 
       if (
         assignmentMethodForPayload === "manual" &&
@@ -2065,6 +2086,34 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
           : assignmentCriteriaForPayload === "configuration"
             ? resolvedAssignmentConfigIds
             : null;
+
+      // For manual + configuration assignment, the backend's /testplans/assign
+      // endpoint reads assigned_to from the testplanconfigurations table rather
+      // than setting it from the request payload. So we must first update each
+      // configuration record's assigned_to via PUT /testplanconfigurations.
+      if (
+        assignmentMethodForPayload === "manual" &&
+        assignmentCriteriaForPayload === "configuration" &&
+        resolvedAssignmentConfigIds.length > 0
+      ) {
+        const numericUsers = assignmentUsersForPayload.filter(
+          (u): u is number => typeof u === "number"
+        );
+        if (numericUsers.length > 0) {
+          const configAssignments = resolvedAssignmentConfigIds.map(
+            (configId, i) => ({
+              id: configId,
+              // Map users to configs positionally; wrap around if fewer users than configs
+              assigned_to: numericUsers[i % numericUsers.length],
+            })
+          );
+          await client.updateTestPlanConfigurations({
+            projectId: resolvedProjectId,
+            testplan: planIdForAssignment,
+            configurations: configAssignments,
+          });
+        }
+      }
 
       const assignWithPayload = async (
         configurationIds: number[] | null

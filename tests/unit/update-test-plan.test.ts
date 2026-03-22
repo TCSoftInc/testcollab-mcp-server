@@ -292,9 +292,12 @@ describe("update_test_plan tool", () => {
     const updateTestPlan = vi.fn();
     const getTestPlanRaw = vi.fn();
 
+    const updateTestPlanConfigurations = vi.fn().mockResolvedValue([{ id: 9001 }]);
+
     vi.mocked(getApiClient).mockReturnValue({
       assignTestPlan,
       updateTestPlan,
+      updateTestPlanConfigurations,
       getTestPlanRaw,
     } as unknown as ReturnType<typeof getApiClient>);
 

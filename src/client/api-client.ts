@@ -619,6 +619,27 @@ export class TestCollabApiClient {
   }
 
   /**
+   * Update test plan configurations (e.g. to set assigned_to per configuration).
+   * PUT /testplanconfigurations
+   */
+  async updateTestPlanConfigurations(data: {
+    projectId: number;
+    testplan: number;
+    configurations: Array<{ id: number; assigned_to: number }>;
+  }): Promise<Array<Record<string, unknown>> | Record<string, unknown>> {
+    const payload = {
+      project: data.projectId,
+      testplan: data.testplan,
+      configurations: data.configurations,
+    };
+    return this.rawRequest<Array<Record<string, unknown>> | Record<string, unknown>>(
+      "PUT",
+      "/testplanconfigurations",
+      payload
+    );
+  }
+
+  /**
    * Assign a test plan.
    */
   async assignTestPlan(data: {

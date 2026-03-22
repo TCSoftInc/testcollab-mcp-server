@@ -88,7 +88,9 @@ const assignmentSchema = z.object({
   configuration_ids: z
     .array(z.union([z.number(), z.string()]))
     .optional()
-    .describe("Configuration IDs for configuration-level assignment"),
+    .describe(
+      "Configuration IDs for configuration-level assignment. Use actual database IDs of existing configurations. Each ID maps positionally to user_ids (user_ids[i] is assigned to configuration_ids[i])."
+    ),
 });
 
 export const updateTestPlanSchema = z.object({
@@ -1495,6 +1497,33 @@ export async function handleUpdateTestPlan(args: unknown): Promise<ToolResponse>
         assignmentCriteria === "configuration"
           ? null
           : toSelectorCollection(assignmentTestCaseIds, assignmentSelector);
+
+      // For manual + configuration assignment, the backend's /testplans/assign
+      // endpoint reads assigned_to from the testplanconfigurations table rather
+      // than setting it from the request payload. So we must first update each
+      // configuration record's assigned_to via PUT /testplanconfigurations.
+      if (
+        assignmentMethod === "manual" &&
+        assignmentCriteria === "configuration" &&
+        assignmentConfigurationIds.length > 0
+      ) {
+        const numericUsers = assignmentUsersForPayload.filter(
+          (u): u is number => typeof u === "number"
+        );
+        if (numericUsers.length > 0) {
+          const configAssignments = assignmentConfigurationIds.map(
+            (configId, i) => ({
+              id: configId,
+              assigned_to: numericUsers[i % numericUsers.length],
+            })
+          );
+          await client.updateTestPlanConfigurations({
+            projectId: resolvedProjectId,
+            testplan: updatedId,
+            configurations: configAssignments,
+          });
+        }
+      }
 
       let assignUsedFallback = false;
       try {
