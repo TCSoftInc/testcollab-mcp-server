@@ -2,6 +2,10 @@
 
 Connect your AI coding assistant to [TestCollab](https://testcollab.com) — manage test cases, test plans, and suites directly from Claude, Cursor, Windsurf, Codex, or any MCP-compatible client.
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/tcsoftinc-testcollab-mcp-server).
+
 ## Quick Start
 
 ### 1. Get your API token
