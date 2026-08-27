@@ -46,6 +46,31 @@ Log in to TestCollab → **My Profile Settings** → **API Token** tab → **Gen
 }
 ```
 
+**Codex** - register TestCollab from the command line:
+
+```bash
+codex mcp add testcollab \
+  --env TC_API_TOKEN=your-api-token \
+  --env TC_API_URL=https://api.testcollab.io \
+  --env TC_DEFAULT_PROJECT=16 \
+  -- npx -y @testcollab/mcp-server
+```
+
+Or add the server to `~/.codex/config.toml` for all projects, or `.codex/config.toml` in a trusted project:
+
+```toml
+[mcp_servers.testcollab]
+command = "npx"
+args = ["-y", "@testcollab/mcp-server"]
+
+[mcp_servers.testcollab.env]
+TC_API_TOKEN = "your-api-token"
+TC_API_URL = "https://api.testcollab.io"
+TC_DEFAULT_PROJECT = "16"
+```
+
+Run `codex mcp list` to confirm the server is configured. See the [official Codex MCP documentation](https://developers.openai.com/codex/mcp/) for configuration scopes and additional options.
+
 **Cursor** — add to `.cursor/mcp.json` in your project root:
 
 ```json
