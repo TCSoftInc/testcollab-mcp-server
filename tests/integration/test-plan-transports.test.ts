@@ -90,7 +90,8 @@ it("stdio discovers execution tools and attaches a local file through multipart 
   expect(JSON.parse(writes[0]!.body).execution_context.tool).toBe("tc-mcp-server");
 }, 10000);
 
-it("HTTP requires token headers, retains resources, refuses file_path, and accepts base64", async () => {
+// TCV-7109: the HTTP transport is disabled; its server is archived in archive/http-server.ts.
+it.skip("HTTP requires token headers, retains resources, refuses file_path, and accepts base64", async () => {
   const probe = createServer();
   const port = await listen(probe);
   await new Promise<void>(resolve => probe.close(() => resolve()));

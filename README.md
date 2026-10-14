@@ -212,9 +212,9 @@ results record `execution_source: api` and `execution_context.tool: tc-mcp-serve
 
 Attachments allow up to **10 files per result**. In stdio mode, use
 `{"file_path":"/path/to/screenshot.png"}` for a local regular file up to 10 MB.
-In either transport, use `file_name` plus standard padded `content_base64` for
+You can also use `file_name` plus standard padded `content_base64` for
 up to 1 MB decoded per file. Omit data-URL prefixes. Optional `mime_type` overrides
-file-extension detection. HTTP refuses `file_path` before filesystem access.
+file-extension detection.
 Invalid evidence is checked before result writes. Errors after a saved result
 identify a failed time/evidence update; repeating the time update can add it twice.
 
@@ -239,20 +239,6 @@ succeed. The response lists confirmed results, skipped IDs and per-execution
 errors. Check it before retrying a partial failure. Batch evidence can be attached
 through `report_test_case_result`. File parsing, auto-create and builds are outside
 this execution flow.
-
-## Hosted HTTP transport
-
-Build and run `npm run start:http` from a clone. Set `MCP_PORT` (default 3100),
-`TC_API_URL` and optional `TC_DEFAULT_PROJECT` for the server. The endpoint is
-`/mcp`; `/health` reports readiness. Both tools and project-context resources are
-available, as with stdio.
-
-Each client must send `X-TC-API-Token`. Optional `X-TC-API-URL` and
-`X-TC-Default-Project` override server defaults. Tokens always come from request
-headers. Sessions are bound to their token and API URL. JSON request bodies are
-bounded to accommodate ten permitted base64 files plus framing, and individual
-file limits are enforced by the tool. Local QA uses `http://localhost:1337` for
-the API and `http://localhost:3100/mcp` for MCP.
 
 See [execution architecture and verification](docs/features/mcp-test-plan-execution.md).
 

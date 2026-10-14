@@ -49,10 +49,10 @@ tool_version: "1.0.0"}`, consistent with CLI provenance. The API stamps
 All operations use existing TestCollab endpoints and the caller's API token.
 The API's existing project membership, role, execution, custom field, and upload
 checks apply. No API endpoints, database models, permissions, feature flags, or
-UI components were added. `src/http-server.ts` adds Streamable HTTP through the
-same tool/resource registry as stdio. HTTP credentials remain request-scoped
-through `src/context.ts`, tokens are required in headers, session credentials
-are pinned, and body size is bounded for the permitted evidence payload.
+UI components were added. The HTTP transport is deprecated and disabled. The
+HTTP server written for this change is archived in `archive/http-server.ts`; it
+is not built or published. `attachments.ts` still refuses `file_path` inside an
+HTTP request context, so the rule holds if an HTTP server is enabled again.
 
 Invalid inputs are checked before result writes, but a result and its time or
 evidence updates are separate API operations. An error after a saved result says
@@ -75,17 +75,17 @@ assignee preservation and override, pagination past 100 cases, revision steps,
 custom statuses, comments, time, configuration matching, custom field retention,
 failure envelopes, partial failures, provenance, token redaction, and file limits.
 Existing plan and project-context tests run alongside the new execution tests.
-Transport tests launch real stdio and HTTP MCP servers against a local API
-fixture. They verify discovery, local multipart files, hosted base64 files, and
-HTTP path refusal and required token headers. They check existing tools and
-resources remain registered and close clients and servers.
+The transport test launches a real stdio MCP server against a local API fixture.
+It verifies discovery and local multipart files, checks that existing tools and
+resources remain registered, and closes clients and servers. The HTTP transport
+test is skipped while the HTTP transport is disabled.
 
 For a live development check, use `http://localhost:1337` and the local Enterprise
 account. Create two cases with a unique tag: one with a default assignee and one
 without. Create a plan by tag name and verify inherited/fallback assignments.
 Read its run and report one assigned execution with steps, a comment, time, and
 a small base64 log. Check the persisted executor, status, time, MCP context, and
-attachment. Refuse a `file_path` through HTTP. Create another plan by tag ID with
+attachment. Create another plan by tag ID with
 override enabled, report one case, and skip the omitted assignment.
 
 For matrix coverage, create a plan with two configurations before assignment.

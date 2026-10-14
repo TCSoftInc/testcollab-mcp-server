@@ -1,4 +1,16 @@
 #!/usr/bin/env node
+// TCV-7109: ARCHIVED. The HTTP transport is deprecated and disabled.
+// The HTTP server was removed from src/ on 2026-03-04 (db30afe). TCV-7109 added this
+// one again, and it is kept here for reference only. It is not compiled (tsconfig
+// includes only src/) and not published (package.json "files" ships only dist/).
+//
+// Before you enable it again:
+// - Move it back to src/http-server.ts and restore the "start:http" script.
+// - Remove .skip from the HTTP test in tests/integration/test-plan-transports.test.ts.
+// - Do not trust the X-TC-API-URL header. The server sends requests to that URL and
+//   returns error bodies to the caller, so a caller can read internal services (SSRF).
+//   Accept only known TestCollab API URLs, or use the server's own TC_API_URL.
+// - Expire idle sessions. Today a session is removed only when its client closes it.
 // TCV-7109: hosted execution tools use header credentials and the same registry
 // as stdio. Request context keeps local file attachments unavailable over HTTP.
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
