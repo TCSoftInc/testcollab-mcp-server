@@ -71,6 +71,14 @@ TC_API_TOKEN=your-token TC_API_URL=http://localhost:1337 npm run dev
 
 This uses `tsx watch` and restarts on file changes. The server communicates over stdin/stdout using the MCP protocol.
 
+## HTTP transport (disabled) (TCV-7109)
+
+The HTTP transport is deprecated and disabled. Its server is archived in
+`archive/http-server.ts`, which is not built or published. Read the note at the
+top of that file before you enable it again.
+
+See [execution workflow and live QA](docs/features/mcp-test-plan-execution.md).
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
