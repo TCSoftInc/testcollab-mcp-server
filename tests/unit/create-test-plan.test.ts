@@ -157,6 +157,7 @@ describe("create_test_plan tool", () => {
     });
 
     expect(assignTestPlan).toHaveBeenCalledWith({
+      overrideExistingAssignees: false,
       projectId: 16,
       testplan: 777,
       executor: "team",
@@ -214,7 +215,7 @@ describe("create_test_plan tool", () => {
     );
   });
 
-  it('passes test_cases.assignee as "me" for bulk add and auto-assignment', async () => {
+  it('preserves inherited assignees and uses "me" as the fallback assignment', async () => {
     const createTestPlan = vi
       .fn()
       .mockResolvedValue({ id: 778, title: "Me-assigned plan" });
@@ -254,9 +255,9 @@ describe("create_test_plan tool", () => {
         testCases: [1001],
         selector: [],
       },
-      assignee: "me",
     });
     expect(assignTestPlan).toHaveBeenCalledWith({
+      overrideExistingAssignees: false,
       projectId: 16,
       testplan: 778,
       executor: "me",
@@ -325,9 +326,9 @@ describe("create_test_plan tool", () => {
         testCases: [1001],
         selector: [],
       },
-      assignee: 45,
     });
     expect(assignTestPlan).toHaveBeenCalledWith({
+      overrideExistingAssignees: false,
       projectId: 16,
       testplan: 780,
       executor: "team",
@@ -375,6 +376,7 @@ describe("create_test_plan tool", () => {
     expect(payload.success).toBe(true);
     expect(payload.steps.assign_test_plan.status).toBe("completed");
     expect(assignTestPlan).toHaveBeenCalledWith({
+      overrideExistingAssignees: false,
       projectId: 16,
       testplan: 779,
       executor: "me",
@@ -434,6 +436,7 @@ describe("create_test_plan tool", () => {
     expect(payload.success).toBe(true);
     expect(payload.steps.assign_test_plan.status).toBe("completed");
     expect(assignTestPlan).toHaveBeenCalledWith({
+      overrideExistingAssignees: false,
       projectId: 16,
       testplan: 781,
       executor: "team",

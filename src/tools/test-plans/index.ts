@@ -30,3 +30,8 @@ export {
   deleteTestPlanSchema,
   handleDeleteTestPlan,
 } from "./delete.js";
+
+// TCV-7109: execution tools extend the existing plan tool set.
+export { handleGetTestPlanCases } from "./cases.js";
+export { handleReportTestCaseResult, handleReportResults } from "./report.js";
+export { getTestPlanCasesSchema, reportTestCaseResultSchema, reportResultsSchema } from "./schemas.js";

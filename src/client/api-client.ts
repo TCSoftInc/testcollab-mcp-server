@@ -135,6 +135,51 @@ export class TestCollabApiClient {
     return response.json() as Promise<T>;
   }
 
+  // TCV-7109: execution endpoints are called directly so SDK serializers cannot
+  // drop provenance, assignment options, or custom fields. Refuse failure envelopes.
+  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    try {
+      const result = await this.rawRequest<T>(method, path, body);
+      this.checkResult(result);
+      return result;
+    } catch (error) {
+      throw this.redactedError(error);
+    }
+  }
+
+  private checkResult(result: unknown): void {
+    if (result && typeof result === "object" && "status" in result && result.status === false) {
+      const message = "message" in result ? String(result.message) : "API operation failed";
+      throw new Error(message);
+    }
+  }
+
+  private redactedError(error: unknown): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Error(message.split(this.token).join("[REDACTED]")
+      .split(encodeURIComponent(this.token)).join("[REDACTED]"));
+  }
+
+  async uploadAttachment(file: { name: string; content: Uint8Array; mimeType: string }, companyId: number): Promise<number> {
+    const form = new FormData();
+    form.append("files", new Blob([new Uint8Array(file.content)], { type: file.mimeType }), file.name);
+    form.append("company", String(companyId));
+    try {
+      const response = await fetch(`${this.baseUrl}/upload?token=${encodeURIComponent(this.token)}`, {
+        method: "POST",
+        body: form,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(`Upload failed (HTTP ${response.status}): ${JSON.stringify(result)}`);
+      this.checkResult(result);
+      const uploaded = Array.isArray(result) ? result[0] : result;
+      if (!uploaded?.id) throw new Error("Upload returned no file ID");
+      return Number(uploaded.id);
+    } catch (error) {
+      throw this.redactedError(error);
+    }
+  }
+
   /**
    * List test cases using the aggrid endpoint (optimized for filtering/pagination)
    * Note: aggrid endpoint is not in the public SDK, so we use raw HTTP
@@ -632,6 +677,7 @@ export class TestCollabApiClient {
       testCases: TestCaseSelectorCollection;
       configuration: number[] | null;
     };
+    overrideExistingAssignees?: boolean;
   }): Promise<Record<string, unknown>> {
     const params = new URLSearchParams();
     params.set("project", String(data.projectId));
@@ -645,6 +691,10 @@ export class TestCollabApiClient {
       assignment_method: data.assignmentMethod,
       assignment: data.assignment,
     };
+    // TCV-7109: create opts into preserving defaults; other callers retain theirs.
+    if (data.overrideExistingAssignees !== undefined) {
+      payload.override_existing_assignees = data.overrideExistingAssignees;
+    }
 
     return this.rawRequest<Record<string, unknown>>(
       "POST",

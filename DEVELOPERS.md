@@ -71,6 +71,25 @@ TC_API_TOKEN=your-token TC_API_URL=http://localhost:1337 npm run dev
 
 This uses `tsx watch` and restarts on file changes. The server communicates over stdin/stdout using the MCP protocol.
 
+## Hosted execution testing (TCV-7109)
+
+The HTTP entry point uses the same tools and resources as stdio:
+
+```bash
+npm run build
+TC_API_URL=http://localhost:1337 TC_DEFAULT_PROJECT=8 MCP_PORT=3100 npm run start:http
+```
+
+Connect at `http://localhost:3100/mcp` and send the user's API token in
+`X-TC-API-Token`. API URL and default project can also be supplied in
+`X-TC-API-URL` and `X-TC-Default-Project`. Tokens require headers; server env
+credentials do not authenticate HTTP requests. HTTP evidence uses `file_name`
+and `content_base64`; `file_path` is available only in stdio mode. Request and
+decoded file limits, session credential binding, tool discovery and retained
+resources are verified in `tests/integration/test-plan-transports.test.ts`.
+
+See [execution workflow and live QA](docs/features/mcp-test-plan-execution.md).
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

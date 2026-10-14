@@ -17,6 +17,9 @@ export interface Config {
   defaultProjectId?: number;
 }
 
+// TCV-7109: HTTP transport and result provenance share credential-free metadata.
+export const SERVER_VERSION = "1.0.0";
+
 function getEnvOrThrow(key: string): string {
   const value = process.env[key];
   if (!value) {
@@ -37,7 +40,7 @@ export function loadConfig(): Config {
     apiBaseUrl: getEnvOrDefault("TC_API_URL", "https://api.testcollab.io"),
     apiToken: getEnvOrThrow("TC_API_TOKEN"),
     serverName: "testcollab",
-    serverVersion: "1.0.0",
+    serverVersion: SERVER_VERSION,
     defaultProjectId: defaultProjectId && !isNaN(defaultProjectId) ? defaultProjectId : undefined,
   };
 }
