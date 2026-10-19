@@ -26,6 +26,17 @@ export const stepResultSchema = z.object({
   comment: z.string().optional(),
 }).strict();
 
+// TCV-7124: coordinates refer to the saved execution, with zero-based row/step indexes.
+export const datasetResultSchema = z.object({
+  dataset_id: idSchema,
+  dataset_row_index: z.number().int().nonnegative(),
+  step_index: z.number().int().nonnegative(),
+  status: statusSchema,
+  comment: z.string().optional(),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
+}).strict();
+export type DatasetResultInput = z.infer<typeof datasetResultSchema>;
+
 export const customFieldSchema = z.object({
   id: idSchema,
   name: z.string().min(1),
@@ -49,6 +60,7 @@ export const reportTestCaseResultSchema = z.object({
   comment: z.string().optional(),
   time_taken: z.number().finite().positive().optional().describe("Additional execution time in milliseconds"),
   step_results: z.array(stepResultSchema).optional(),
+  dataset_results: z.array(datasetResultSchema).optional().describe("Results by dataset ID and zero-based row/step indexes from get_test_plan_cases. Unreported entries are preserved. The case status must rank at least as high as every row status. Files count toward the 10-file call limit"),
   attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Up to 10 files. file_path: stdio only, max 10 MB. file_name + content_base64: max 1 MB decoded per file"),
 }).strict();
 

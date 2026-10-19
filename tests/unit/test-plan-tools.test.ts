@@ -58,6 +58,7 @@ beforeEach(() => {
         case "/testplans/42": return response(plan);
         case "/testplanregressions": return response([run]);
         case "/testplantestcases": return paged(cases);
+        case "/testdatasets/getLatest": return response([]);
         case "/testplanconfigurations": return paged([{ id: 9, parameters: [{ field: "Browser", value: "Chrome" }] }, { id: 11, parameters: [{ field: "Browser", value: "Firefox" }] }]);
         case "/statuses": return paged(statuses);
         case "/users/me": return response({ id: 5011 });

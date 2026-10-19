@@ -192,6 +192,11 @@ token owner's assigned execution IDs and the run's revision steps. The response
 includes `testCases`, `configurations`, `statuses` with active `systemName` values,
 and `executions`. Use these internal IDs; `TC-` display numbers are different IDs.
 
+For data-driven cases, each case includes `datasets` with `id`, `name`,
+`parameters` and `rows` (`index` plus `values`). Each execution includes its saved
+`datasets` and `datasetResults`. Use the execution's snapshots for a run; later
+library edits can change the case's current datasets.
+
 Report one assigned execution with `report_test_case_result`:
 
 ```json
@@ -218,6 +223,34 @@ Attachments allow up to **10 files per result**. In stdio mode, use
 You can also use `file_name` plus standard padded `content_base64` for
 up to 1 MB decoded per file. Omit data-URL prefixes. Optional `mime_type` overrides
 file-extension detection.
+
+For a data-driven execution, send `dataset_results` instead of `step_results`:
+
+```json
+{
+  "run_id":365,
+  "executed_test_case_id":53404,
+  "status":"failed",
+  "dataset_results":[
+    {"dataset_id":7,"dataset_row_index":0,"step_index":0,"status":"passed"},
+    {"dataset_id":7,"dataset_row_index":1,"step_index":0,"status":"failed",
+     "comment":"This account could not sign in",
+     "attachments":[{"file_name":"failure.log","content_base64":"T2sK"}]}
+  ]
+}
+```
+
+Copy `dataset_id`, `dataset_row_index` and `step_index` from the execution's
+`datasetResults`; indexes start at zero. Each supplied entry changes that row
+and step only. Unreported entries keep their status, comment and files. New files
+are added to existing files on the selected entry. The 10-file limit covers
+top-level and row files together. The case `status` must rank at least as high
+as all saved row statuses in the project's status vocabulary. Duplicate or
+unknown coordinates and inactive statuses are refused before uploads or writes.
+Row files are uploaded and linked to the execution before saving their IDs in
+the row results. If the result write then fails, those files remain linked to
+the execution and no time has been added.
+
 Invalid evidence is checked before result writes. Errors after a saved result
 identify a failed time/evidence update; repeating the time update can add it twice.
 

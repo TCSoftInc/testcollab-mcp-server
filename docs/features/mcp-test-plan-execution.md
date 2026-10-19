@@ -62,6 +62,37 @@ which later operation failed. Batch output lists confirmed results and errors;
 it must be checked before retrying. Time is additive, so blindly replaying a
 partially completed request can add time twice.
 
+## Dataset rows (TCV-7124)
+
+`cases.ts` reads current case links from `GET /testdatasets/getLatest` and
+returns normalized parameters and indexed rows. Each execution instead returns
+its saved `testdataset` snapshot and `testdataset_wise_result` entries as
+`datasets` and `datasetResults`. These entries give the exact dataset ID and
+zero-based row/step coordinates for `report_test_case_result.dataset_results`.
+
+`datasets.ts` merges supplied entries onto the execution's saved entries,
+following the CLI's `applyExampleResults` pattern. It retains step text,
+expected results, comments, mentions and files unless the caller updates them;
+unreported entries retain their statuses too. Duplicate or unknown coordinates
+are errors. The caller supplies the case status; the API enforces the project
+status priority rule across all row/step results. Without row input, the existing
+case-level status propagation still applies. No API or permission change is needed.
+
+Row evidence uses the existing attachment format, size and transport checks.
+The 10-file limit spans top-level and row files. Row files are uploaded with
+the project company and linked via `updateAttachments` before their IDs are
+appended to the matching entry. This prevents saving unlinked row evidence.
+If a later result write fails, files can remain linked without a row reference;
+check the saved execution before retrying. Time is written after the result.
+
+QA: read a two-row, two-step case with `get_test_plan_cases`, both with and
+without `run_id`. Edit the library dataset and confirm the execution keeps its
+snapshot. Report different statuses for each row/step, comments and files on
+selected entries. Read the execution back and confirm unreported entries and
+old files survive. Reject invalid IDs/indexes, duplicate coordinates, inactive
+statuses, hosted file paths and more than 10 files across the call. The unit
+tests in `tests/unit/dataset-results.test.ts` cover these contracts.
+
 ## Verification
 
 Use Node 20 or newer:
