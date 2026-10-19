@@ -41,7 +41,8 @@ function mergeStepResults(execution: ApiRecord, caseStatus: string, results: Non
   });
 }
 
-async function writeResult(client: TestCollabApiClient, projectId: number, execution: ApiRecord, input: ResultInput) {
+// TCV-7123: accept merged steps containing uploaded IDs, without passing file inputs to the API.
+async function writeResult(client: TestCollabApiClient, projectId: number, execution: ApiRecord, input: ResultInput, stepResults?: ApiRecord[]) {
   const payload: ApiRecord = {
     id: execution.id, project: projectId, test_plan: relationId(execution.test_plan),
     test_plan_test_case: relationId(execution.test_plan_test_case), status: input.status,
@@ -51,7 +52,7 @@ async function writeResult(client: TestCollabApiClient, projectId: number, execu
   if (configId) payload.test_plan_config = configId;
   if (input.comment !== undefined) payload.comment = encodeComment(input.comment);
   // TCV-7109: an empty list means no step results; tc-api then gives every step the case status.
-  if (input.step_results?.length) payload.step_wise_result = mergeStepResults(execution, input.status, input.step_results);
+  if (input.step_results?.length) payload.step_wise_result = stepResults ?? mergeStepResults(execution, input.status, input.step_results);
   const updated = await client.request<ApiRecord>("PUT", `/executedtestcases/${execution.id}`, payload);
   if (Number(updated.id) !== Number(execution.id)) throw new Error("TestCollab did not confirm the result write");
   if (input.time_taken !== undefined) {
@@ -64,20 +65,23 @@ async function writeResult(client: TestCollabApiClient, projectId: number, execu
   return updated;
 }
 
+// TCV-7123: return company-checked IDs so they can also be saved on their steps.
 async function attachFiles(client: TestCollabApiClient, projectId: number, executionId: number, files: PreparedAttachment[]) {
-  if (!files.length) return 0;
+  if (!files.length) return [];
   const project = await client.request<ApiRecord>("GET", `/projects/${projectId}`);
   const companyId = relationId(project.company);
   if (!companyId) throw new Error("Project company was not returned");
   const ids: number[] = [];
   for (const file of files) ids.push(await client.uploadAttachment(file, companyId));
   await client.request("PUT", `/executedtestcases/${executionId}/updateAttachments`, { project: projectId, attachments: ids });
-  return ids.length;
+  return ids;
 }
 
 export async function handleReportTestCaseResult(args: unknown) {
   return handleTool(reportTestCaseResultSchema, args, async (input, client, projectId) => {
-    const files = await prepareAttachments(input.attachments);
+    // TCV-7123: validate the whole call together, including the 10-file cap, before any API calls.
+    const topLevelCount = input.attachments?.length ?? 0;
+    const files = await prepareAttachments([...(input.attachments || []), ...(input.step_results || []).flatMap(step => step.attachments || [])]);
     const query = new URLSearchParams({ project: String(projectId), regression: String(input.run_id), id: String(input.executed_test_case_id), _limit: "1" });
     const rows = await client.request<ApiRecord[]>("GET", `/executedtestcases?${query}`);
     const execution = rows[0];
@@ -91,10 +95,23 @@ export async function handleReportTestCaseResult(args: unknown) {
     const statuses = await getStatuses(client, projectId);
     validateStatus(input.status, statuses);
     for (const step of input.step_results || []) validateStatus(step.status, statuses);
-    const updated = await writeResult(client, projectId, execution, input);
+    // TCV-7123: check the step count before uploads, then company-check the file links
+    // before placing their IDs on steps. Saved text, comments and attachment IDs survive.
+    const stepResults = input.step_results?.length ? mergeStepResults(execution, input.status, input.step_results) : undefined;
+    const stepFileIds = await attachFiles(client, projectId, input.executed_test_case_id, files.slice(topLevelCount));
+    let offset = 0;
+    for (const [index, step] of (input.step_results || []).entries()) {
+      const count = step.attachments?.length ?? 0;
+      if (count) {
+        const saved = stepResults![index]!;
+        saved.attachments = [...(saved.attachments || []), ...stepFileIds.slice(offset, offset + count)];
+        offset += count;
+      }
+    }
+    const updated = await writeResult(client, projectId, execution, input, stepResults);
     let attachmentsUploaded: number;
     try {
-      attachmentsUploaded = await attachFiles(client, projectId, input.executed_test_case_id, files);
+      attachmentsUploaded = stepFileIds.length + (await attachFiles(client, projectId, input.executed_test_case_id, files.slice(0, topLevelCount))).length;
     } catch (error) {
       throw new Error(`Result saved for execution ${execution.id}, but evidence upload failed: ${error instanceof Error ? error.message : String(error)}. Do not repeat the result or time update.`);
     }

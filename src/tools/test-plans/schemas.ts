@@ -24,6 +24,8 @@ export const stepResultSchema = z.object({
   expected_result: z.string().optional(),
   status: statusSchema,
   comment: z.string().optional(),
+  // TCV-7123: step evidence uses the same file formats and per-file limits.
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Files for this step; up to 10 files total across all steps and top-level attachments"),
 }).strict();
 
 export const customFieldSchema = z.object({
@@ -49,7 +51,7 @@ export const reportTestCaseResultSchema = z.object({
   comment: z.string().optional(),
   time_taken: z.number().finite().positive().optional().describe("Additional execution time in milliseconds"),
   step_results: z.array(stepResultSchema).optional(),
-  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Up to 10 files. file_path: stdio only, max 10 MB. file_name + content_base64: max 1 MB decoded per file"),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Up to 10 files total, including step attachments. file_path: stdio only, max 10 MB. file_name + content_base64: max 1 MB decoded per file"),
 }).strict();
 
 export const reportResultsSchema = z.object({

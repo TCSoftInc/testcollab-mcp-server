@@ -31,8 +31,18 @@ discovery also validate handler input, so documented limits match validation.
   MCP provenance; the API's bulk skip action targets the latest run.
 - `attachments.ts`: reject HTTP paths before filesystem access. Read regular
   local files within a 10 MB cap, or validate and decode at most 1 MB of standard
-  padded base64. Maximum 10 files per execution. Uploads include the project's
+  padded base64. Maximum 10 files per call across result and step attachments. Uploads include the project's
   company, then `updateAttachments` links and merges the returned IDs.
+
+TCV-7123 adds `step_results[].attachments` to `report_test_case_result`, using the
+same file inputs as result-level evidence. The handler validates all files and the
+combined count before API calls, then checks statuses and step count. It uploads
+step files and links them with the company-checked `updateAttachments` endpoint
+before saving their IDs in `step_wise_result[n].attachments`. IDs already saved on
+each step are retained. Result-level files keep their existing upload flow after
+the result write. `attachmentsUploaded` counts both groups. A step upload or link
+failure leaves result status and time unchanged; files already uploaded may remain.
+The API and UI already support these step file IDs, so neither needs a change.
 
 `src/client/api-client.ts` makes direct API requests for these flows. This keeps
 assignment options, custom fields, and execution provenance from being dropped
@@ -81,6 +91,21 @@ The transport test launches a real stdio MCP server against a local API fixture.
 It verifies discovery and local multipart files, checks that existing tools and
 resources remain registered, and closes clients and servers. The HTTP transport
 test is skipped while the HTTP transport is disabled.
+
+Step-evidence tests cover existing array/JSON-encoded steps, retained IDs, absent
+or null saved steps, mixed result and step files, the combined 10-file boundary,
+nested file validation, and upload/link failures before status or time updates.
+The stdio transport test checks discovery, multipart local and base64 files,
+their saved step IDs, and the final execution response through a local API fixture.
+
+For manual verification of TCV-7123, report a local execution with two steps:
+attach a local file to the first, a base64 log to the second, and a top-level log.
+Read the execution back and check each step's IDs and the execution's attachment
+list. Report again with a new step file and confirm the old IDs remain. In the
+Run screen and result view, open the files under their respective steps. The
+result view also repeats step files under Run Attachments; that existing UI issue
+is outside TCV-7123. Send 11 files spread across steps and confirm the call is
+refused before uploads or result updates.
 
 For a live development check, use `http://localhost:1337` and the local Enterprise
 account. Create two cases with a unique tag: one with a default assignee and one

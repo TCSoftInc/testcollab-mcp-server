@@ -201,7 +201,10 @@ Report one assigned execution with `report_test_case_result`:
   "status":"passed",
   "comment":"Login succeeded",
   "time_taken":1200,
-  "step_results":[{"step":"Sign in","expected_result":"Home page appears","status":"passed"}],
+  "step_results":[{
+    "step":"Sign in","expected_result":"Home page appears","status":"passed",
+    "attachments":[{"file_name":"step.log","content_base64":"T2sK"}]
+  }],
   "attachments":[{"file_name":"run.log","content_base64":"T2sK"}]
 }
 ```
@@ -213,13 +216,19 @@ send takes the case status. Send at most one result per step. Status uses an act
 results record `execution_source: agent` ("Agent" in the Run Mode column) and
 `execution_context.tool: tc-mcp-server`. TestCollab counts an `agent` result as machine-executed.
 
-Attachments allow up to **10 files per result**. In stdio mode, use
+Each `step_results` item accepts an optional `attachments` list in the same format
+as the top-level list. Step files appear under that step, and previously saved
+step files are kept. Top-level files belong to the whole result.
+
+Attachments allow up to **10 files per call, across all steps and the top-level list**. In stdio mode, use
 `{"file_path":"/path/to/screenshot.png"}` for a local regular file up to 10 MB.
 You can also use `file_name` plus standard padded `content_base64` for
 up to 1 MB decoded per file. Omit data-URL prefixes. Optional `mime_type` overrides
 file-extension detection.
 Invalid evidence is checked before result writes. Errors after a saved result
 identify a failed time/evidence update; repeating the time update can add it twice.
+Step files are uploaded and linked to the execution before their IDs are saved on
+the steps. If that upload or link fails, the result and time are not updated.
 
 For `report_results`, pass `test_plan_id` and a nonempty `results` array:
 
