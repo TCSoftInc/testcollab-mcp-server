@@ -6,15 +6,16 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { getConfig } from "./config.js";
+import { getConfig, type Config } from "./config.js";
 import { registerTools } from "./tools/index.js";
 import { registerResources } from "./resources/index.js";
 
 /**
  * Create and configure the MCP server
  */
-export function createServer(): McpServer {
-  const config = getConfig();
+export function createServer(metadata?: Pick<Config, "serverName" | "serverVersion">): McpServer {
+  // TCV-7109: HTTP credentials come from request headers, not the env config.
+  const config = metadata ?? getConfig();
 
   const server = new McpServer({
     name: config.serverName,

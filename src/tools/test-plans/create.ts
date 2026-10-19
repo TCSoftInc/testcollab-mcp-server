@@ -50,6 +50,9 @@ const customFieldSchema = z.object({
 });
 
 const testCasesSchema = z.object({
+  // TCV-7109: select by a project tag without writing a raw selector.
+  tag_id: z.number().int().positive().optional().describe("Project tag ID to select cases; use tag_id or tag_name"),
+  tag_name: z.string().trim().min(1).optional().describe("Exact project tag name to select cases; use tag_id or tag_name"),
   test_case_ids: z
     .array(z.union([z.number(), z.string()]))
     .optional()
@@ -106,6 +109,8 @@ const assignmentSchema = z.object({
 });
 
 export const createTestPlanSchema = z.object({
+  // TCV-7109: creation keeps inherited assignees unless explicitly overridden.
+  override_assignees: z.boolean().default(false).describe("Override inherited default assignees with the supplied assignment; false keeps defaults and fills unassigned cases"),
   project_id: z
     .number()
     .optional()
@@ -184,7 +189,8 @@ Optional:
 - release (ID or title)
 - start_date, end_date
 - custom_fields
-- test_cases (test_case_ids/selector/assignee; assignee supports user ID/"me"/name)
+- test_cases (test_case_ids/selector/tag_id/tag_name/assignee; assignee supports user ID/"me"/name)
+- override_assignees (default false: keeps default case assignees, assigns only cases with none)
 - configurations
 - assignment (supports user IDs/"me"/names; if user says "assign to me", use "me")
 
@@ -210,6 +216,7 @@ Example:
   inputSchema: {
     type: "object" as const,
     properties: {
+      override_assignees: { type: "boolean", default: false, description: "Keep default case assignees unless explicitly overridden" },
       project_id: {
         type: "number",
         description:
@@ -277,6 +284,8 @@ Example:
         type: "object",
         description: "Bulk add test cases to the newly created test plan",
         properties: {
+          tag_id: { type: "integer", minimum: 1, description: "Select by project tag ID" },
+          tag_name: { type: "string", description: "Select by exact project tag name" },
           test_case_ids: {
             type: "array",
             items: { oneOf: [{ type: "number" }, { type: "string" }] },
@@ -1029,6 +1038,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
     test_cases,
     configurations,
     assignment,
+    override_assignees,
   } = parsed.data;
 
   const normalizedTitle = normalizeString(title) ?? buildDefaultTestPlanTitle();
@@ -1118,7 +1128,14 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
   }
 
   const testCaseIds = normalizeNumberIds(test_cases?.test_case_ids);
-  const testCaseSelector = test_cases?.selector;
+  const testCaseSelector = [...(test_cases?.selector ?? [])];
+  const hasTag = test_cases?.tag_id !== undefined || test_cases?.tag_name !== undefined;
+  if (test_cases?.tag_id !== undefined && test_cases?.tag_name !== undefined) {
+    return toError("INVALID_TAG_SELECTION", "Provide test_cases.tag_id or test_cases.tag_name, not both.");
+  }
+  if (hasTag && testCaseIds.length) {
+    return toError("INVALID_TAG_SELECTION", "Select cases by a tag or by test_case_ids, not both.");
+  }
   const hasTestCaseAssignee = test_cases?.assignee !== undefined;
   const testCaseAssigneeValue = normalizeAssignee(test_cases?.assignee);
 
@@ -1131,7 +1148,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
 
   const shouldAddTestCases =
     test_cases !== undefined &&
-    (testCaseIds.length > 0 || (testCaseSelector?.length ?? 0) > 0);
+    (testCaseIds.length > 0 || testCaseSelector.length > 0 || hasTag);
   const shouldCreateConfigurations =
     configurations !== undefined && configurations.length > 0;
   const shouldAssignFromTestCaseAssignee =
@@ -1161,6 +1178,18 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
 
   try {
     const client = getApiClient();
+
+    // TCV-7109: resolve tags within this project before any plan is created.
+    if (hasTag) {
+      const tags = await client.listTags(resolvedProjectId);
+      const matches = tags.filter(tag => test_cases?.tag_id !== undefined
+        ? toNumberId(tag.id) === test_cases.tag_id
+        : tag.name === test_cases?.tag_name);
+      if (matches.length !== 1) {
+        return toError("INVALID_TAG_SELECTION", "Tag was not found or is ambiguous in this project. Use an exact name or ID.");
+      }
+      testCaseSelector.push({ field: "tags", operator: "jsonstring_2", value: JSON.stringify({ filter: [[matches[0].id]], type: "equals", filterType: "number" }) });
+    }
 
     // Resolve folder (supports ID or title)
     let resolvedFolderId: number | null | undefined;
@@ -1577,7 +1606,8 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
       bulkAddResult = await client.bulkAddTestPlanTestCases({
         testplan: createdPlanId,
         testCaseCollection: toSelectorCollection(testCaseIds, testCaseSelector),
-        ...(resolvedTestCaseAssignee !== undefined
+        // TCV-7109: bulk-add must inherit defaults before fallback assignment.
+        ...(override_assignees && resolvedTestCaseAssignee !== undefined
           ? { assignee: resolvedTestCaseAssignee }
           : {}),
       });
@@ -1728,6 +1758,7 @@ export async function handleCreateTestPlan(args: unknown): Promise<ToolResponse>
         executor: assignmentExecutorForPayload,
         assignmentCriteria: assignmentCriteriaForPayload,
         assignmentMethod: assignmentMethodForPayload,
+        overrideExistingAssignees: override_assignees,
         assignment: {
           user: assignmentUsersForPayload,
           testCases: assignFromTestCaseAssignee

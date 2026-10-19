@@ -30,6 +30,12 @@ import {
   deleteTestPlanTool,
   deleteTestPlanSchema,
   handleDeleteTestPlan,
+  handleGetTestPlanCases,
+  getTestPlanCasesSchema,
+  handleReportTestCaseResult,
+  reportTestCaseResultSchema,
+  handleReportResults,
+  reportResultsSchema,
 } from "./test-plans/index.js";
 import {
   createSuiteTool,
@@ -342,6 +348,11 @@ Example:
       return handleUpdateTestPlan(args);
     }
   );
+
+  // TCV-7109: run a plan through MCP with configuration-safe execution IDs.
+  server.tool("get_test_plan_cases", "Get all cases in a plan with steps, expected results, active status system names and per-configuration status. Provide run_id to get the token owner's assigned execution IDs and revision steps.", getTestPlanCasesSchema.shape, handleGetTestPlanCases);
+  server.tool("report_test_case_result", "Report one executed_test_case_id in a run, with a status system name (custom statuses supported), comment, additional time in milliseconds, step results and up to 10 attachments. file_path: stdio only, 10 MB/file. file_name plus content_base64: 1 MB decoded/file. The API token determines the executor.", reportTestCaseResultSchema.shape, handleReportTestCaseResult);
+  server.tool("report_results", "Report a structured list of results for the caller's assigned executions in a plan. Defaults to the latest run; configuration_id selects matrix executions. Optionally set plan custom_fields and mark omitted assigned executions skipped after all supplied results succeed. Records MCP provenance; no report-file parsing, auto-create or builds.", reportResultsSchema.shape, handleReportResults);
 
   // -------------------------------------------------------------------------
   // delete_test_plan
