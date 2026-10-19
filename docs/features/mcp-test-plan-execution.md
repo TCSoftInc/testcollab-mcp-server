@@ -7,7 +7,7 @@ connection and do not provide a terminal for the TestCollab CLI.
 ## API flow and decisions
 
 `src/tools/test-plans/` holds four tool handlers and their shared input schemas.
-`src/tools/index.ts` registers them on both transports. The schemas used for
+`src/tools/index.ts` registers them on the stdio server. The schemas used for
 discovery also validate handler input, so documented limits match validation.
 
 - `create.ts`: extend the existing creation flow with `test_cases.tag_id` or

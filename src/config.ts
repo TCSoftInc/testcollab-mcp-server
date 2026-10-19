@@ -3,6 +3,7 @@
  */
 
 import "./env.js";
+import { readFileSync } from "node:fs";
 
 export interface Config {
   /** Base URL for the TestCollab API */
@@ -17,8 +18,9 @@ export interface Config {
   defaultProjectId?: number;
 }
 
-// TCV-7109: HTTP transport and result provenance share credential-free metadata.
-export const SERVER_VERSION = "1.0.0";
+// TCV-7109: result provenance records the installed version. The release workflow writes
+// it into package.json before it publishes.
+export const SERVER_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 function getEnvOrThrow(key: string): string {
   const value = process.env[key];

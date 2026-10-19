@@ -206,8 +206,10 @@ Report one assigned execution with `report_test_case_result`:
 }
 ```
 
-Status uses an active system name, including custom statuses. `time_taken` adds
-**milliseconds**, matching `tc reportCase`. The token determines the executor;
+`step_results` are matched to the run's steps by position: each saved step keeps its
+text and expected result, and takes the status and comment you send. A step you do not
+send takes the case status. Send at most one result per step. Status uses an active system name, including custom statuses. `time_taken` adds
+**milliseconds** (the CLI's `tc reportCase --time-taken` takes seconds). The token determines the executor;
 results record `execution_source: agent` ("Agent" in the Run Mode column) and
 `execution_context.tool: tc-mcp-server`. TestCollab counts an `agent` result as machine-executed.
 

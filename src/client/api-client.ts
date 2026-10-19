@@ -149,8 +149,9 @@ export class TestCollabApiClient {
 
   private checkResult(result: unknown): void {
     if (result && typeof result === "object" && "status" in result && result.status === false) {
-      const message = "message" in result ? String(result.message) : "API operation failed";
-      throw new Error(message);
+      // TCV-7109: some tc-api failures carry their reason in `title`, not `message`.
+      const reason = "message" in result ? result.message : "title" in result ? result.title : undefined;
+      throw new Error(reason ? String(reason) : "API operation failed");
     }
   }
 

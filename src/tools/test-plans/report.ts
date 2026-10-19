@@ -11,6 +11,36 @@ const EXECUTION_SOURCE = "agent";
 
 interface ResultInput { status: string; comment?: string; time_taken?: number; step_results?: Array<{ status: string; step?: string; expected_result?: string; comment?: string }> }
 
+// TCV-7109: tc-api rows can hold the step list as JSON text, as JSON encoded twice, or as "null".
+function savedSteps(raw: unknown): ApiRecord[] {
+  let value = raw;
+  for (let i = 0; i < 2 && typeof value === "string"; i++) {
+    try { value = JSON.parse(value); } catch { return []; }
+  }
+  return Array.isArray(value) ? value : [];
+}
+
+// TCV-7109: the Run screen draws its step list from the saved step results. Keep each saved
+// step (text, expected result, index, files) and take the status and the comment from the
+// input, matched by position. A step with no input takes the case status, as tc-api and
+// tc report do, so an old step status cannot block the new case status. An execution with
+// no saved steps stores the input in the API's own format (`expected_result`).
+function mergeStepResults(execution: ApiRecord, caseStatus: string, results: NonNullable<ResultInput["step_results"]>): ApiRecord[] {
+  const saved = savedSteps(execution.step_wise_result);
+  if (!saved.length) return results.map(step => ({
+    status: step.status,
+    ...(step.step === undefined ? {} : { step: step.step }),
+    ...(step.expected_result === undefined ? {} : { expected_result: step.expected_result }),
+    ...(step.comment === undefined ? {} : { comment: encodeComment(step.comment) }),
+  }));
+  if (results.length > saved.length) throw new Error(`Execution ${execution.id} has ${saved.length} steps, but ${results.length} step results were sent`);
+  return saved.map((step, index) => {
+    const result = results[index];
+    if (!result) return { ...step, status: caseStatus };
+    return { ...step, status: result.status, ...(result.comment === undefined ? {} : { comment: encodeComment(result.comment) }) };
+  });
+}
+
 async function writeResult(client: TestCollabApiClient, projectId: number, execution: ApiRecord, input: ResultInput) {
   const payload: ApiRecord = {
     id: execution.id, project: projectId, test_plan: relationId(execution.test_plan),
@@ -20,12 +50,8 @@ async function writeResult(client: TestCollabApiClient, projectId: number, execu
   const configId = relationId(execution.test_plan_config);
   if (configId) payload.test_plan_config = configId;
   if (input.comment !== undefined) payload.comment = encodeComment(input.comment);
-  if (input.step_results !== undefined) payload.step_wise_result = input.step_results.map(step => ({
-    status: step.status,
-    ...(step.step === undefined ? {} : { step: step.step }),
-    ...(step.expected_result === undefined ? {} : { expectedResult: step.expected_result }),
-    ...(step.comment === undefined ? {} : { comment: encodeComment(step.comment) }),
-  }));
+  // TCV-7109: an empty list means no step results; tc-api then gives every step the case status.
+  if (input.step_results?.length) payload.step_wise_result = mergeStepResults(execution, input.status, input.step_results);
   const updated = await client.request<ApiRecord>("PUT", `/executedtestcases/${execution.id}`, payload);
   if (Number(updated.id) !== Number(execution.id)) throw new Error("TestCollab did not confirm the result write");
   if (input.time_taken !== undefined) {
@@ -66,12 +92,18 @@ export async function handleReportTestCaseResult(args: unknown) {
     validateStatus(input.status, statuses);
     for (const step of input.step_results || []) validateStatus(step.status, statuses);
     const updated = await writeResult(client, projectId, execution, input);
+    let attachmentsUploaded: number;
     try {
-      const attachmentsUploaded = await attachFiles(client, projectId, input.executed_test_case_id, files);
-      return { success: true, id: input.executed_test_case_id, status: updated.status, attachmentsUploaded, result: updated };
+      attachmentsUploaded = await attachFiles(client, projectId, input.executed_test_case_id, files);
     } catch (error) {
       throw new Error(`Result saved for execution ${execution.id}, but evidence upload failed: ${error instanceof Error ? error.message : String(error)}. Do not repeat the result or time update.`);
     }
+    // TCV-7109: time and evidence are separate writes after the result. Return the row as
+    // saved after them, so a caller can confirm the call instead of repeating it (time adds up).
+    const reread = input.time_taken === undefined && !files.length ? undefined
+      : (await client.request<ApiRecord[]>("GET", `/executedtestcases?${query}`).catch(() => []))[0];
+    const saved = reread && Number(reread.id) === input.executed_test_case_id ? reread : updated;
+    return { success: true, id: input.executed_test_case_id, status: saved.status, attachmentsUploaded, result: saved };
   });
 }
 

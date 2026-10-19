@@ -1,6 +1,7 @@
 // TCV-7109: exercise real handlers, schemas, and API request serialization.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runWithContext } from "../../src/context.js";
@@ -11,6 +12,8 @@ import { prepareAttachments } from "../../src/tools/test-plans/attachments.js";
 import { MAX_BASE64_BYTES, MAX_FILE_BYTES } from "../../src/tools/test-plans/schemas.js";
 import type { ApiRecord, ToolResult } from "../../src/tools/test-plans/shared.js";
 
+// The release workflow bumps package.json before it runs the tests, so never assert a fixed version.
+const packageVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 const context = { apiToken: "secret-fixture-token", apiUrl: "http://localhost:1337", defaultProjectId: 8 };
 const plan = { id: 42, project: { id: 8 }, title: "MCP plan", custom_fields: [{ id: 1, name: "keep", value: "old" }] };
 const run = { id: 6, project: 8, testplan: 42 };
@@ -139,7 +142,8 @@ describe("report_test_case_result", () => {
   it("reports custom status, encoded comments, steps and milliseconds with MCP provenance", async () => {
     const result = await call(handleReportTestCaseResult, { ...input, comment: "Review <this>\nline", time_taken: 25, step_results: [{ step: "Check", expected_result: "Pass", status: "needs_review", comment: "a & b" }] });
     expect(result.isError).toBeUndefined();
-    expect(writes()[0]!.body).toMatchObject({ status: "needs_review", project: 8, test_plan: 42, test_plan_test_case: 50, test_plan_config: 9, execution_source: "agent", execution_context: { tool: "tc-mcp-server", tool_version: "1.0.0" }, comment: escape("Review <this>\nline"), step_wise_result: [{ step: "Check", expectedResult: "Pass", status: "needs_review", comment: escape("a & b") }] });
+    expect(writes()[0]!.body).toMatchObject({ status: "needs_review", project: 8, test_plan: 42, test_plan_test_case: 50, test_plan_config: 9, execution_source: "agent", execution_context: { tool: "tc-mcp-server", tool_version: packageVersion }, comment: escape("Review <this>\nline"), step_wise_result: [{ step: "Check", expected_result: "Pass", status: "needs_review", comment: escape("a & b") }] });
+    expect(writes()[0]!.body.step_wise_result[0]).not.toHaveProperty("expectedResult");
     expect(writes()[0]!.body).not.toHaveProperty("executed_by");
     expect(writes()[1]!.body).toEqual({ project: 8, time_taken: 25 });
   });
@@ -150,6 +154,82 @@ describe("report_test_case_result", () => {
     expect(upload.body.get("company")).toBe("5004");
     expect(await upload.body.get("files").text()).toBe("log line");
     expect(writes().at(-1)!.body).toEqual({ project: 8, attachments: [200] });
+  });
+  it("returns the execution as saved after the time and evidence updates", async () => {
+    let lookups = 0;
+    routeOverride = (method, url) => {
+      if (method !== "GET" || url.pathname !== "/executedtestcases" || !url.searchParams.has("id")) return undefined;
+      lookups += 1;
+      return response([lookups === 1 ? execution : { ...execution, status: "needs_review", time_taken: 25, attachments: [{ id: 200 }] }]);
+    };
+    const result = unpack(await call(handleReportTestCaseResult, { ...input, time_taken: 25, attachments: [{ file_name: "log.txt", content_base64: Buffer.from("log").toString("base64") }] }));
+    expect(lookups).toBe(2);
+    expect(result.result).toMatchObject({ time_taken: 25, attachments: [{ id: 200 }] });
+  });
+  it("does not re-read without time or files", async () => {
+    let lookups = 0;
+    routeOverride = (method, url) => { if (method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")) lookups += 1; return undefined; };
+    await call(handleReportTestCaseResult, input);
+    expect(lookups).toBe(1);
+  });
+  it.each([
+    ["fails", () => response({ message: "down" }, 500)],
+    ["returns another row", () => response([{ ...execution, id: 999 }])],
+  ])("returns the write reply when the re-read %s", async (_label, reread) => {
+    let lookups = 0;
+    routeOverride = (method, url) => {
+      if (method !== "GET" || url.pathname !== "/executedtestcases" || !url.searchParams.has("id")) return undefined;
+      lookups += 1;
+      return lookups === 1 ? response([execution]) : reread();
+    };
+    const result = unpack(await call(handleReportTestCaseResult, { ...input, time_taken: 5 }));
+    expect(result.success).toBe(true);
+    expect(result.result).toMatchObject({ id: 90, status: "needs_review" });
+  });
+  it("keeps the saved steps, takes status and comment by position, and gives unsent steps the case status", async () => {
+    const saved = [
+      { step_index: 0, step: "Sign in", expected_result: "Home", status: "unexecuted", comment: null, attachments: [3] },
+      { step_index: 1, step: "Sign out", expected_result: "Login", status: "unexecuted", comment: null, attachments: null },
+    ];
+    routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")
+      ? response([{ ...execution, step_wise_result: saved }]) : undefined;
+    const result = await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed", comment: "a & b", step: "agent text", expected_result: "agent result" }] });
+    expect(result.isError).toBeUndefined();
+    expect(writes()[0]!.body.step_wise_result).toEqual([{ ...saved[0], status: "passed", comment: escape("a & b") }, { ...saved[1], status: "needs_review" }]);
+  });
+  it("lets a new pass replace old failed steps that were not sent", async () => {
+    const saved = [0, 1, 2].map(i => ({ step: `Step ${i}`, expected_result: `Result ${i}`, status: "failed", comment: "old" }));
+    routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")
+      ? response([{ ...execution, step_wise_result: saved }]) : undefined;
+    await call(handleReportTestCaseResult, { ...input, status: "passed", step_results: [{ status: "passed" }] });
+    expect(writes()[0]!.body.step_wise_result.map((step: ApiRecord) => step.status)).toEqual(["passed", "passed", "passed"]);
+    expect(writes()[0]!.body.step_wise_result.map((step: ApiRecord) => step.step)).toEqual(["Step 0", "Step 1", "Step 2"]);
+  });
+  it("sends no step results for an empty list, so tc-api gives every step the case status", async () => {
+    await call(handleReportTestCaseResult, { ...input, step_results: [] });
+    expect(writes()[0]!.body).not.toHaveProperty("step_wise_result");
+  });
+  it.each([
+    ["JSON text", (steps: ApiRecord[]) => JSON.stringify(steps)],
+    ["JSON encoded twice", (steps: ApiRecord[]) => JSON.stringify(JSON.stringify(steps))],
+  ])("reads saved steps stored as %s", async (_label, encode) => {
+    routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")
+      ? response([{ ...execution, step_wise_result: encode([{ step: "Sign in", expected_result: "Home", status: "unexecuted" }]) }]) : undefined;
+    await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed" }] });
+    expect(writes()[0]!.body.step_wise_result).toEqual([{ step: "Sign in", expected_result: "Home", status: "passed" }]);
+  });
+  it("treats saved steps stored as the text null as no saved steps", async () => {
+    routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")
+      ? response([{ ...execution, step_wise_result: "null" }]) : undefined;
+    await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed", step: "Sign in" }] });
+    expect(writes()[0]!.body.step_wise_result).toEqual([{ status: "passed", step: "Sign in" }]);
+  });
+  it("refuses more step results than saved steps before writes", async () => {
+    routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")
+      ? response([{ ...execution, step_wise_result: JSON.stringify([{ step_index: 0, step: "Sign in", status: "unexecuted" }]) }]) : undefined;
+    const result = await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed" }, { status: "passed" }] });
+    expect(unpack(result).error.message).toContain("has 1 steps, but 2 step results");
+    expect(writes()).toHaveLength(0);
   });
   it("refuses hosted file paths before file access or API calls", async () => {
     const result = await call(handleReportTestCaseResult, { ...input, attachments: [{ file_path: "/server/private.txt" }] });
@@ -195,6 +275,18 @@ describe("report_results", () => {
     expect(unpack(result)).toMatchObject({ runId: 6, skipped: [91], reported: [{ testCaseId: 10, executedTestCaseId: 90, status: "passed" }] });
     expect(writes()[0]!.body).toMatchObject({ title: "MCP plan", custom_fields: [{ id: 1, name: "keep", value: "old" }, { id: 2, name: "env", value: "staging" }] });
     expect(writes().at(-1)!.body).toMatchObject({ id: 91, status: "skipped", execution_context: { tool: "tc-mcp-server" } });
+  });
+  it("shows the API's reason when the plan custom field update fails, before any result write", async () => {
+    routeOverride = (method, url) => method === "PUT" && url.pathname === "/testplans/42"
+      ? response({ status: false, title: "Data for required custom field(s) is not provided : env" }) : undefined;
+    const result = await call(handleReportResults, { test_plan_id: 42, results: [{ test_case_id: 10, status: "passed" }], custom_fields: [{ id: 2, name: "env", value: "" }] });
+    expect(unpack(result).error.message).toContain("required custom field(s) is not provided");
+    expect(writes().filter(row => row.url.pathname.startsWith("/executedtestcases"))).toHaveLength(0);
+  });
+  it("accepts a list of labels for a multi-select plan field", async () => {
+    const result = await call(handleReportResults, { test_plan_id: 42, results: [{ test_case_id: 10, status: "passed" }], custom_fields: [{ id: 3, name: "browsers", value: ["chrome", "firefox"], valueLabel: ["Chrome", "Firefox"] }] });
+    expect(result.isError).toBeUndefined();
+    expect(writes()[0]!.body.custom_fields).toContainEqual({ id: 3, name: "browsers", value: ["chrome", "firefox"], valueLabel: ["Chrome", "Firefox"] });
   });
   it("refuses an ambiguous matrix before any writes", async () => {
     assigned.push({ ...execution, id: 92, test_plan_config: { id: 11 } });

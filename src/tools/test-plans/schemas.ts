@@ -31,7 +31,7 @@ export const customFieldSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
   value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()])), z.null()]),
-  valueLabel: z.string().optional(),
+  valueLabel: z.union([z.string(), z.array(z.string())]).optional(),
   color: z.string().optional(),
 }).strict();
 
