@@ -58,6 +58,7 @@ beforeEach(() => {
         case "/testplans/42": return response(plan);
         case "/testplanregressions": return response([run]);
         case "/testplantestcases": return paged(cases);
+        case "/testdatasets/getLatest": return response([]);
         case "/testplanconfigurations": return paged([{ id: 9, parameters: [{ field: "Browser", value: "Chrome" }] }, { id: 11, parameters: [{ field: "Browser", value: "Firefox" }] }]);
         case "/statuses": return paged(statuses);
         case "/users/me": return response({ id: 5011 });
@@ -155,6 +156,87 @@ describe("report_test_case_result", () => {
     expect(await upload.body.get("files").text()).toBe("log line");
     expect(writes().at(-1)!.body).toEqual({ project: 8, attachments: [200] });
   });
+  // TCV-7123: step evidence shares the result's limits and keeps its own file IDs.
+  it.each(["array", "JSON text", "JSON encoded twice"])("links step files before saving their IDs and preserves %s steps", async encoding => {
+    const saved = [
+      { step_index: 0, step: "Sign in", expected_result: "Home", status: "unexecuted", attachments: [3], comment: "old" },
+      { step_index: 1, step: "Sign out", expected_result: "Login", status: "unexecuted", attachments: null },
+      { step_index: 2, step: "Check", status: "unexecuted", attachments: [4] },
+    ];
+    let uploaded = 200;
+    routeOverride = (method, url) => {
+      if (url.pathname === "/upload") return response([{ id: uploaded++ }]);
+      if (method === "GET" && url.pathname === "/executedtestcases") return response([{ ...execution,
+        step_wise_result: encoding === "array" ? saved : encoding === "JSON text" ? JSON.stringify(saved) : JSON.stringify(JSON.stringify(saved)),
+      }]);
+      return undefined;
+    };
+    const file = (name: string) => ({ file_name: name, content_base64: "YQ==" });
+    const result = unpack(await call(handleReportTestCaseResult, { ...input, attachments: [file("run.txt")], step_results: [
+      { status: "passed", comment: "a & b", attachments: [file("step-1.txt"), file("step-1-more.txt")] },
+      { status: "needs_review", attachments: [file("step-2.txt")] },
+    ] }));
+    expect(result.success).toBe(true);
+    expect(result.attachmentsUploaded).toBe(4);
+    const resultWrite = writes().find(row => row.url.pathname === "/executedtestcases/90")!;
+    expect(resultWrite.body.step_wise_result).toEqual([
+      { ...saved[0], status: "passed", comment: escape("a & b"), attachments: [3, 200, 201] },
+      { ...saved[1], status: "needs_review", attachments: [202] },
+      { ...saved[2], status: "needs_review" },
+    ]);
+    const links = writes().filter(row => row.url.pathname.endsWith("/updateAttachments"));
+    expect(links.map(row => row.body)).toEqual([{ project: 8, attachments: [200, 201, 202] }, { project: 8, attachments: [203] }]);
+    expect(writes().indexOf(links[0]!)).toBeLessThan(writes().indexOf(resultWrite));
+    for (const upload of writes().filter(row => row.url.pathname === "/upload")) expect(upload.body.get("company")).toBe("5004");
+  });
+  it.each([undefined, "null"])("saves new step files when no step list exists (%s)", async step_wise_result => {
+    routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases"
+      ? response([{ ...execution, step_wise_result }]) : undefined;
+    const result = await call(handleReportTestCaseResult, { ...input, step_results: [
+      { status: "passed", step: "Check", expected_result: "OK", attachments: [{ file_name: "step.txt", content_base64: "YQ==" }] },
+    ] });
+    expect(result.isError).toBeUndefined();
+    expect(writes().find(row => row.url.pathname === "/executedtestcases/90")!.body.step_wise_result).toEqual([
+      { status: "passed", step: "Check", expected_result: "OK", attachments: [200] },
+    ]);
+  });
+  it("accepts 10 files shared between the result and its steps", async () => {
+    const file = { file_name: "log.txt", content_base64: "YQ==" };
+    const result = await call(handleReportTestCaseResult, { ...input, attachments: Array(4).fill(file), step_results: [
+      { status: "passed", attachments: Array(3).fill(file) }, { status: "passed", attachments: Array(3).fill(file) },
+    ] });
+    expect(result.isError).toBeUndefined();
+    expect(unpack(result).attachmentsUploaded).toBe(10);
+    expect(writes().filter(row => row.url.pathname === "/upload")).toHaveLength(10);
+  });
+  it.each([0, 4])("refuses more than 10 files across steps with %s top-level files before API calls", async topCount => {
+    const file = { file_name: "log.txt", content_base64: "YQ==" };
+    const result = await call(handleReportTestCaseResult, { ...input, attachments: Array(topCount).fill(file), step_results: [
+      { status: "passed", attachments: Array(5).fill(file) }, { status: "passed", attachments: Array(6 - topCount).fill(file) },
+    ] });
+    expect(result.isError).toBe(true);
+    expect(unpack(result).error.message).toContain("at most 10");
+    expect(calls).toHaveLength(0);
+  });
+  it.each([
+    ["hosted paths", { file_path: "/server/private.txt" }, "only allowed in stdio"],
+    ["malformed base64", { file_name: "log.txt", content_base64: "bad!" }, "Invalid base64"],
+    ["oversized base64", { file_name: "log.txt", content_base64: Buffer.alloc(MAX_BASE64_BYTES + 1).toString("base64") }, "exceeds 1 MB"],
+  ])("validates nested %s before API calls", async (_label, file, message) => {
+    const result = await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed", attachments: [file] }] });
+    expect(result.isError).toBe(true);
+    expect(unpack(result).error.message).toContain(message);
+    expect(calls).toHaveLength(0);
+  });
+  it.each(["/upload", "/executedtestcases/90/updateAttachments"])("does not save step IDs or time when %s fails", async failedPath => {
+    routeOverride = (_method, url) => url.pathname === failedPath ? response({ message: "Evidence refused" }, 400) : undefined;
+    const result = await call(handleReportTestCaseResult, { ...input, time_taken: 25, step_results: [
+      { status: "passed", attachments: [{ file_name: "step.txt", content_base64: "YQ==" }] },
+    ] });
+    expect(result.isError).toBe(true);
+    expect(unpack(result).error.message).toContain("Evidence refused");
+    expect(writes().some(row => row.url.pathname === "/executedtestcases/90" || row.url.pathname.endsWith("/updateTimeTaken"))).toBe(false);
+  });
   it("returns the execution as saved after the time and evidence updates", async () => {
     let lookups = 0;
     routeOverride = (method, url) => {
@@ -227,7 +309,7 @@ describe("report_test_case_result", () => {
   it("refuses more step results than saved steps before writes", async () => {
     routeOverride = (method, url) => method === "GET" && url.pathname === "/executedtestcases" && url.searchParams.has("id")
       ? response([{ ...execution, step_wise_result: JSON.stringify([{ step_index: 0, step: "Sign in", status: "unexecuted" }]) }]) : undefined;
-    const result = await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed" }, { status: "passed" }] });
+    const result = await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "passed" }, { status: "passed", attachments: [{ file_name: "step.txt", content_base64: "YQ==" }] }] });
     expect(unpack(result).error.message).toContain("has 1 steps, but 2 step results");
     expect(writes()).toHaveLength(0);
   });
@@ -241,7 +323,7 @@ describe("report_test_case_result", () => {
     expect(writes()).toHaveLength(0);
   });
   it("refuses an invalid step status before writes", async () => {
-    expect((await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "inactive" }] })).isError).toBe(true);
+    expect((await call(handleReportTestCaseResult, { ...input, step_results: [{ status: "inactive", attachments: [{ file_name: "step.txt", content_base64: "YQ==" }] }] })).isError).toBe(true);
     expect(writes()).toHaveLength(0);
   });
   it("refuses an execution from another run", async () => {

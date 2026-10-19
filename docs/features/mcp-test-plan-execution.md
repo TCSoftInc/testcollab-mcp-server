@@ -31,8 +31,20 @@ discovery also validate handler input, so documented limits match validation.
   MCP provenance; the API's bulk skip action targets the latest run.
 - `attachments.ts`: reject HTTP paths before filesystem access. Read regular
   local files within a 10 MB cap, or validate and decode at most 1 MB of standard
-  padded base64. Maximum 10 files per execution. Uploads include the project's
-  company, then `updateAttachments` links and merges the returned IDs.
+  padded base64. Maximum 10 files per call across result, step and dataset row
+  attachments. Uploads include the project's company, then `updateAttachments`
+  links and merges the returned IDs.
+
+TCV-7123 adds `step_results[].attachments` to `report_test_case_result`, using the
+same file inputs as result-level evidence. The handler validates all files and the
+combined count before API calls, then checks statuses and step count. It uploads
+step files and links them with the company-checked `updateAttachments` endpoint
+before saving their IDs in `step_wise_result[n].attachments`. IDs already saved on
+each step are retained. Result-level files keep their existing upload flow after
+the result write. Step and dataset row files share this pre-result upload path
+and the call's file limit. `attachmentsUploaded` counts every group. A step upload or link
+failure leaves result status and time unchanged; files already uploaded may remain.
+The API and UI already support these step file IDs, so neither needs a change.
 
 `src/client/api-client.ts` makes direct API requests for these flows. This keeps
 assignment options, custom fields, and execution provenance from being dropped
@@ -62,6 +74,37 @@ which later operation failed. Batch output lists confirmed results and errors;
 it must be checked before retrying. Time is additive, so blindly replaying a
 partially completed request can add time twice.
 
+## Dataset rows (TCV-7124)
+
+`cases.ts` reads current case links from `GET /testdatasets/getLatest` and
+returns normalized parameters and indexed rows. Each execution instead returns
+its saved `testdataset` snapshot and `testdataset_wise_result` entries as
+`datasets` and `datasetResults`. These entries give the exact dataset ID and
+zero-based row/step coordinates for `report_test_case_result.dataset_results`.
+
+`datasets.ts` merges supplied entries onto the execution's saved entries,
+following the CLI's `applyExampleResults` pattern. It retains step text,
+expected results, comments, mentions and files unless the caller updates them;
+unreported entries retain their statuses too. Duplicate or unknown coordinates
+are errors. The caller supplies the case status; the API enforces the project
+status priority rule across all row/step results. Without row input, the existing
+case-level status propagation still applies. No API or permission change is needed.
+
+Row evidence uses the existing attachment format, size and transport checks.
+The 10-file limit spans top-level, step and row files. Row files are uploaded with
+the project company and linked via `updateAttachments` before their IDs are
+appended to the matching entry. This prevents saving unlinked row evidence.
+If a later result write fails, files can remain linked without a row reference;
+check the saved execution before retrying. Time is written after the result.
+
+QA: read a two-row, two-step case with `get_test_plan_cases`, both with and
+without `run_id`. Edit the library dataset and confirm the execution keeps its
+snapshot. Report different statuses for each row/step, comments and files on
+selected entries. Read the execution back and confirm unreported entries and
+old files survive. Reject invalid IDs/indexes, duplicate coordinates, inactive
+statuses, hosted file paths and more than 10 files across the call. The unit
+tests in `tests/unit/dataset-results.test.ts` cover these contracts.
+
 ## Verification
 
 Use Node 20 or newer:
@@ -81,6 +124,21 @@ The transport test launches a real stdio MCP server against a local API fixture.
 It verifies discovery and local multipart files, checks that existing tools and
 resources remain registered, and closes clients and servers. The HTTP transport
 test is skipped while the HTTP transport is disabled.
+
+Step-evidence tests cover existing array/JSON-encoded steps, retained IDs, absent
+or null saved steps, mixed result and step files, the combined 10-file boundary,
+nested file validation, and upload/link failures before status or time updates.
+The stdio transport test checks discovery, multipart local and base64 files,
+their saved step IDs, and the final execution response through a local API fixture.
+
+For manual verification of TCV-7123, report a local execution with two steps:
+attach a local file to the first, a base64 log to the second, and a top-level log.
+Read the execution back and check each step's IDs and the execution's attachment
+list. Report again with a new step file and confirm the old IDs remain. In the
+Run screen and result view, open the files under their respective steps. The
+result view also repeats step files under Run Attachments; that existing UI issue
+is outside TCV-7123. Send 11 files spread across steps and confirm the call is
+refused before uploads or result updates.
 
 For a live development check, use `http://localhost:1337` and the local Enterprise
 account. Create two cases with a unique tag: one with a default assignee and one

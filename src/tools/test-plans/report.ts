@@ -2,6 +2,7 @@
 import type { TestCollabApiClient } from "../../client/api-client.js";
 import { SERVER_VERSION } from "../../config.js";
 import { prepareAttachments, type PreparedAttachment } from "./attachments.js";
+import { addDatasetAttachments, mergeDatasetResults } from "./datasets.js";
 import { reportResultsSchema, reportTestCaseResultSchema } from "./schemas.js";
 import { encodeComment, getAssignedExecutions, getPlan, getRun, getStatuses, handleTool, relationId, validateStatus, type ApiRecord } from "./shared.js";
 
@@ -41,7 +42,8 @@ function mergeStepResults(execution: ApiRecord, caseStatus: string, results: Non
   });
 }
 
-async function writeResult(client: TestCollabApiClient, projectId: number, execution: ApiRecord, input: ResultInput) {
+// Accept merged steps and dataset rows containing company-checked uploaded IDs.
+async function writeResult(client: TestCollabApiClient, projectId: number, execution: ApiRecord, input: ResultInput, stepResults?: ApiRecord[], datasetResults?: ApiRecord[]) {
   const payload: ApiRecord = {
     id: execution.id, project: projectId, test_plan: relationId(execution.test_plan),
     test_plan_test_case: relationId(execution.test_plan_test_case), status: input.status,
@@ -51,7 +53,9 @@ async function writeResult(client: TestCollabApiClient, projectId: number, execu
   if (configId) payload.test_plan_config = configId;
   if (input.comment !== undefined) payload.comment = encodeComment(input.comment);
   // TCV-7109: an empty list means no step results; tc-api then gives every step the case status.
-  if (input.step_results?.length) payload.step_wise_result = mergeStepResults(execution, input.status, input.step_results);
+  if (input.step_results?.length) payload.step_wise_result = stepResults ?? mergeStepResults(execution, input.status, input.step_results);
+  // TCV-7124: supplying saved row entries prevents tc-api from rebuilding all rows with the case status.
+  if (datasetResults) payload.testdataset_wise_result = datasetResults;
   const updated = await client.request<ApiRecord>("PUT", `/executedtestcases/${execution.id}`, payload);
   if (Number(updated.id) !== Number(execution.id)) throw new Error("TestCollab did not confirm the result write");
   if (input.time_taken !== undefined) {
@@ -64,20 +68,25 @@ async function writeResult(client: TestCollabApiClient, projectId: number, execu
   return updated;
 }
 
+// TCV-7123: return company-checked IDs so they can also be saved on their steps.
 async function attachFiles(client: TestCollabApiClient, projectId: number, executionId: number, files: PreparedAttachment[]) {
-  if (!files.length) return 0;
+  if (!files.length) return [];
   const project = await client.request<ApiRecord>("GET", `/projects/${projectId}`);
   const companyId = relationId(project.company);
   if (!companyId) throw new Error("Project company was not returned");
   const ids: number[] = [];
   for (const file of files) ids.push(await client.uploadAttachment(file, companyId));
   await client.request("PUT", `/executedtestcases/${executionId}/updateAttachments`, { project: projectId, attachments: ids });
-  return ids.length;
+  return ids;
 }
 
 export async function handleReportTestCaseResult(args: unknown) {
   return handleTool(reportTestCaseResultSchema, args, async (input, client, projectId) => {
-    const files = await prepareAttachments(input.attachments);
+    // TCV-7123/7124: one file cap across result, step and dataset row evidence.
+    const topLevelCount = input.attachments?.length ?? 0;
+    const stepFiles = (input.step_results || []).flatMap(step => step.attachments || []);
+    const rowFiles = (input.dataset_results || []).flatMap(row => row.attachments || []);
+    const files = await prepareAttachments([...(input.attachments || []), ...stepFiles, ...rowFiles]);
     const query = new URLSearchParams({ project: String(projectId), regression: String(input.run_id), id: String(input.executed_test_case_id), _limit: "1" });
     const rows = await client.request<ApiRecord[]>("GET", `/executedtestcases?${query}`);
     const execution = rows[0];
@@ -91,10 +100,30 @@ export async function handleReportTestCaseResult(args: unknown) {
     const statuses = await getStatuses(client, projectId);
     validateStatus(input.status, statuses);
     for (const step of input.step_results || []) validateStatus(step.status, statuses);
-    const updated = await writeResult(client, projectId, execution, input);
+    for (const row of input.dataset_results || []) validateStatus(row.status, statuses);
+    // Resolve every step and coordinate before uploading any evidence.
+    const stepResults = input.step_results?.length ? mergeStepResults(execution, input.status, input.step_results) : undefined;
+    const datasetResults = input.dataset_results?.length ? mergeDatasetResults(execution, input.dataset_results) : undefined;
+    let nestedFileIds: number[];
+    try {
+      nestedFileIds = await attachFiles(client, projectId, input.executed_test_case_id, files.slice(topLevelCount));
+    } catch (error) {
+      throw new Error(`Evidence upload/link failed before result update for execution ${execution.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    let offset = 0;
+    for (const [index, step] of (input.step_results || []).entries()) {
+      const count = step.attachments?.length ?? 0;
+      if (count) {
+        const saved = stepResults![index]!;
+        saved.attachments = [...(saved.attachments || []), ...nestedFileIds.slice(offset, offset + count)];
+        offset += count;
+      }
+    }
+    if (rowFiles.length) addDatasetAttachments(datasetResults!, input.dataset_results!, nestedFileIds.slice(stepFiles.length));
+    const updated = await writeResult(client, projectId, execution, input, stepResults, datasetResults);
     let attachmentsUploaded: number;
     try {
-      attachmentsUploaded = await attachFiles(client, projectId, input.executed_test_case_id, files);
+      attachmentsUploaded = nestedFileIds.length + (await attachFiles(client, projectId, input.executed_test_case_id, files.slice(0, topLevelCount))).length;
     } catch (error) {
       throw new Error(`Result saved for execution ${execution.id}, but evidence upload failed: ${error instanceof Error ? error.message : String(error)}. Do not repeat the result or time update.`);
     }
