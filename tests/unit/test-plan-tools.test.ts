@@ -139,7 +139,7 @@ describe("report_test_case_result", () => {
   it("reports custom status, encoded comments, steps and milliseconds with MCP provenance", async () => {
     const result = await call(handleReportTestCaseResult, { ...input, comment: "Review <this>\nline", time_taken: 25, step_results: [{ step: "Check", expected_result: "Pass", status: "needs_review", comment: "a & b" }] });
     expect(result.isError).toBeUndefined();
-    expect(writes()[0]!.body).toMatchObject({ status: "needs_review", project: 8, test_plan: 42, test_plan_test_case: 50, test_plan_config: 9, execution_source: "api", execution_context: { tool: "tc-mcp-server", tool_version: "1.0.0" }, comment: escape("Review <this>\nline"), step_wise_result: [{ step: "Check", expectedResult: "Pass", status: "needs_review", comment: escape("a & b") }] });
+    expect(writes()[0]!.body).toMatchObject({ status: "needs_review", project: 8, test_plan: 42, test_plan_test_case: 50, test_plan_config: 9, execution_source: "agent", execution_context: { tool: "tc-mcp-server", tool_version: "1.0.0" }, comment: escape("Review <this>\nline"), step_wise_result: [{ step: "Check", expectedResult: "Pass", status: "needs_review", comment: escape("a & b") }] });
     expect(writes()[0]!.body).not.toHaveProperty("executed_by");
     expect(writes()[1]!.body).toEqual({ project: 8, time_taken: 25 });
   });

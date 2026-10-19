@@ -39,9 +39,11 @@ assignment options, custom fields, and execution provenance from being dropped
 by the published SDK's serializers. It rejects HTTP errors and HTTP 200 failure
 envelopes and redacts the API token from errors.
 
-The existing API source vocabulary has no `mcp` value. Results therefore record
-`execution_source: api` and `execution_context: {tool: "tc-mcp-server",
-tool_version: "1.0.0"}`, consistent with CLI provenance. The API stamps
+An MCP tool is always called by an AI assistant, so results record the API's
+`agent` source and `execution_context: {tool: "tc-mcp-server",
+tool_version: "1.0.0"}` (decided by Abhimanyu, 2026-10-14). The Run Mode column
+shows "Agent", and the API counts `agent` (like `ci`) as machine-executed, so the
+case counts as automation-covered. The API stamps
 `executed_by` from the user's credential. There is no executor input.
 
 ## Permissions and operation

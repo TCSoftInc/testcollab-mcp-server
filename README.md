@@ -208,7 +208,8 @@ Report one assigned execution with `report_test_case_result`:
 
 Status uses an active system name, including custom statuses. `time_taken` adds
 **milliseconds**, matching `tc reportCase`. The token determines the executor;
-results record `execution_source: api` and `execution_context.tool: tc-mcp-server`.
+results record `execution_source: agent` ("Agent" in the Run Mode column) and
+`execution_context.tool: tc-mcp-server`. TestCollab counts an `agent` result as machine-executed.
 
 Attachments allow up to **10 files per result**. In stdio mode, use
 `{"file_path":"/path/to/screenshot.png"}` for a local regular file up to 10 MB.

@@ -5,13 +5,17 @@ import { prepareAttachments, type PreparedAttachment } from "./attachments.js";
 import { reportResultsSchema, reportTestCaseResultSchema } from "./schemas.js";
 import { encodeComment, getAssignedExecutions, getPlan, getRun, getStatuses, handleTool, relationId, validateStatus, type ApiRecord } from "./shared.js";
 
+// TCV-7109: an MCP tool is always called by an AI assistant, so results record the API's
+// `agent` source ("Agent" in Run Mode). The API counts `agent` as machine-executed.
+const EXECUTION_SOURCE = "agent";
+
 interface ResultInput { status: string; comment?: string; time_taken?: number; step_results?: Array<{ status: string; step?: string; expected_result?: string; comment?: string }> }
 
 async function writeResult(client: TestCollabApiClient, projectId: number, execution: ApiRecord, input: ResultInput) {
   const payload: ApiRecord = {
     id: execution.id, project: projectId, test_plan: relationId(execution.test_plan),
     test_plan_test_case: relationId(execution.test_plan_test_case), status: input.status,
-    execution_source: "api", execution_context: { tool: "tc-mcp-server", tool_version: SERVER_VERSION },
+    execution_source: EXECUTION_SOURCE, execution_context: { tool: "tc-mcp-server", tool_version: SERVER_VERSION },
   };
   const configId = relationId(execution.test_plan_config);
   if (configId) payload.test_plan_config = configId;
