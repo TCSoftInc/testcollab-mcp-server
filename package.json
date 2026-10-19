@@ -1,6 +1,6 @@
 {
   "name": "@testcollab/mcp-server",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "MCP Server for TestCollab - Exposes test management functionality to AI assistants",
   "type": "module",
   "main": "dist/index.js",
