@@ -31,8 +31,9 @@ discovery also validate handler input, so documented limits match validation.
   MCP provenance; the API's bulk skip action targets the latest run.
 - `attachments.ts`: reject HTTP paths before filesystem access. Read regular
   local files within a 10 MB cap, or validate and decode at most 1 MB of standard
-  padded base64. Maximum 10 files per call across result and step attachments. Uploads include the project's
-  company, then `updateAttachments` links and merges the returned IDs.
+  padded base64. Maximum 10 files per call across result, step and dataset row
+  attachments. Uploads include the project's company, then `updateAttachments`
+  links and merges the returned IDs.
 
 TCV-7123 adds `step_results[].attachments` to `report_test_case_result`, using the
 same file inputs as result-level evidence. The handler validates all files and the
@@ -40,7 +41,8 @@ combined count before API calls, then checks statuses and step count. It uploads
 step files and links them with the company-checked `updateAttachments` endpoint
 before saving their IDs in `step_wise_result[n].attachments`. IDs already saved on
 each step are retained. Result-level files keep their existing upload flow after
-the result write. `attachmentsUploaded` counts both groups. A step upload or link
+the result write. Step and dataset row files share this pre-result upload path
+and the call's file limit. `attachmentsUploaded` counts every group. A step upload or link
 failure leaves result status and time unchanged; files already uploaded may remain.
 The API and UI already support these step file IDs, so neither needs a change.
 
@@ -71,6 +73,37 @@ evidence updates are separate API operations. An error after a saved result says
 which later operation failed. Batch output lists confirmed results and errors;
 it must be checked before retrying. Time is additive, so blindly replaying a
 partially completed request can add time twice.
+
+## Dataset rows (TCV-7124)
+
+`cases.ts` reads current case links from `GET /testdatasets/getLatest` and
+returns normalized parameters and indexed rows. Each execution instead returns
+its saved `testdataset` snapshot and `testdataset_wise_result` entries as
+`datasets` and `datasetResults`. These entries give the exact dataset ID and
+zero-based row/step coordinates for `report_test_case_result.dataset_results`.
+
+`datasets.ts` merges supplied entries onto the execution's saved entries,
+following the CLI's `applyExampleResults` pattern. It retains step text,
+expected results, comments, mentions and files unless the caller updates them;
+unreported entries retain their statuses too. Duplicate or unknown coordinates
+are errors. The caller supplies the case status; the API enforces the project
+status priority rule across all row/step results. Without row input, the existing
+case-level status propagation still applies. No API or permission change is needed.
+
+Row evidence uses the existing attachment format, size and transport checks.
+The 10-file limit spans top-level, step and row files. Row files are uploaded with
+the project company and linked via `updateAttachments` before their IDs are
+appended to the matching entry. This prevents saving unlinked row evidence.
+If a later result write fails, files can remain linked without a row reference;
+check the saved execution before retrying. Time is written after the result.
+
+QA: read a two-row, two-step case with `get_test_plan_cases`, both with and
+without `run_id`. Edit the library dataset and confirm the execution keeps its
+snapshot. Report different statuses for each row/step, comments and files on
+selected entries. Read the execution back and confirm unreported entries and
+old files survive. Reject invalid IDs/indexes, duplicate coordinates, inactive
+statuses, hosted file paths and more than 10 files across the call. The unit
+tests in `tests/unit/dataset-results.test.ts` cover these contracts.
 
 ## Verification
 

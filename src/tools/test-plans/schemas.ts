@@ -25,8 +25,19 @@ export const stepResultSchema = z.object({
   status: statusSchema,
   comment: z.string().optional(),
   // TCV-7123: step evidence uses the same file formats and per-file limits.
-  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Files for this step; up to 10 files total across all steps and top-level attachments"),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Files for this step; up to 10 files total across the result, steps and dataset rows"),
 }).strict();
+
+// TCV-7124: coordinates refer to the saved execution, with zero-based row/step indexes.
+export const datasetResultSchema = z.object({
+  dataset_id: idSchema,
+  dataset_row_index: z.number().int().nonnegative(),
+  step_index: z.number().int().nonnegative(),
+  status: statusSchema,
+  comment: z.string().optional(),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
+}).strict();
+export type DatasetResultInput = z.infer<typeof datasetResultSchema>;
 
 export const customFieldSchema = z.object({
   id: idSchema,
@@ -51,7 +62,8 @@ export const reportTestCaseResultSchema = z.object({
   comment: z.string().optional(),
   time_taken: z.number().finite().positive().optional().describe("Additional execution time in milliseconds"),
   step_results: z.array(stepResultSchema).optional(),
-  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Up to 10 files total, including step attachments. file_path: stdio only, max 10 MB. file_name + content_base64: max 1 MB decoded per file"),
+  dataset_results: z.array(datasetResultSchema).optional().describe("Results by dataset ID and zero-based row/step indexes from get_test_plan_cases. Unreported entries are preserved. The case status must rank at least as high as every row status. Files count toward the 10-file call limit"),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional().describe("Up to 10 files total, including step and dataset row attachments. file_path: stdio only, max 10 MB. file_name + content_base64: max 1 MB decoded per file"),
 }).strict();
 
 export const reportResultsSchema = z.object({

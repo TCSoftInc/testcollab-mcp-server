@@ -27,7 +27,9 @@ async function listen(server: Server): Promise<number> {
 beforeEach(async () => {
   writes = [];
   let nextFileId = 200;
+  const dataset = { id: 7, name: "Users", parameters: [{ key: "user", field: "Username" }], datarows: [{ user: "alice" }, { user: "bob" }] };
   execution = { id: 90, project: 8, regression: 6, test_plan: 42, test_plan_test_case: { id: 50, test_case: 10 }, assigned_to: 5011,
+    testdataset: [dataset], testdataset_wise_result: [0, 1].map(dataset_row_index => ({ dataset_id: 7, dataset_row_index, step_index: 0, status: "unexecuted", step: "Sign in" })),
     step_wise_result: [
       { step_index: 0, step: "Sign in", expected_result: "Home", status: "unexecuted", attachments: [3] },
       { step_index: 1, step: "Sign out", expected_result: "Login", status: "unexecuted", attachments: null },
@@ -47,6 +49,10 @@ beforeEach(async () => {
         "/testplanregressions": [{ id: 6, project: 8, testplan: 42 }],
         "/statuses": [{ id: 1, system_name: "passed", is_active: true }],
         "/projects/8": { id: 8, company: { id: 5004 } },
+        "/users/me": { id: 5011 },
+        "/testplantestcases": [{ id: 50, test_case: { id: 10, title: "Sign in" } }],
+        "/testplanconfigurations": [],
+        "/testdatasets/getLatest": [dataset],
       };
       if (!(url.pathname in data)) { res.statusCode = 404; res.end("{}"); return; }
       res.end(JSON.stringify(data[url.pathname]));
@@ -137,6 +143,33 @@ it("stdio discovers step attachments and saves local and base64 files under the 
   const uploads = writes.filter(write => write.path === "/upload");
   expect(uploads[0]!.body).toContain("local step evidence");
   expect(uploads[1]!.body).toContain("base64 step evidence");
+}, 10000);
+
+// TCV-7124: discovery and row files also travel through the real stdio protocol.
+it("stdio reads datasets and reports a row/step file without replacing another row", async () => {
+  client = new Client({ name: "tcv7124-test", version: "1" });
+  await client.connect(new StdioClientTransport({
+    command: process.execPath, args: ["--import", "tsx", "src/index.ts"],
+    env: { ...process.env as Record<string, string>, TC_API_TOKEN: "transport-fixture-token", TC_API_URL: apiUrl, TC_DEFAULT_PROJECT: "8" },
+    stderr: "pipe",
+  }));
+  const discovered = (await client.listTools()).tools;
+  expect(discovered.find(tool => tool.name === "report_test_case_result")!.inputSchema.properties).toHaveProperty("dataset_results");
+  const casesResult = await client.callTool({ name: "get_test_plan_cases", arguments: { test_plan_id: 42, run_id: 6 } });
+  expect(casesResult.isError).not.toBe(true);
+  const data = JSON.parse((casesResult.content as any)[0].text);
+  expect(data.executions[0].datasets[0].rows[1]).toEqual({ index: 1, values: { user: "bob" } });
+  const file = path.join(tempDir, "row-proof.log");
+  await writeFile(file, "bob row evidence");
+  const result = await client.callTool({ name: "report_test_case_result", arguments: { ...resultInput,
+    dataset_results: [{ dataset_id: 7, dataset_row_index: 1, step_index: 0, status: "passed", comment: "bob passed", attachments: [{ file_path: file }] }],
+  } });
+  expect(result.isError).not.toBe(true);
+  expect(writes.find(write => write.path === "/upload")!.body).toContain("bob row evidence");
+  const rows = JSON.parse(writes.find(write => write.path === "/executedtestcases/90")!.body).testdataset_wise_result;
+  expect(rows[0]).toMatchObject({ dataset_row_index: 0, status: "unexecuted" });
+  expect(rows[0]).not.toHaveProperty("attachments");
+  expect(rows[1]).toMatchObject({ dataset_row_index: 1, status: "passed", comment: escape("bob passed"), attachments: [200] });
 }, 10000);
 
 // TCV-7109: the HTTP transport is disabled; its server is archived in archive/http-server.ts.
