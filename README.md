@@ -1,5 +1,8 @@
 # TestCollab MCP Server
 
+[![npm version](https://img.shields.io/npm/v/@testcollab/mcp-server.svg)](https://www.npmjs.com/package/@testcollab/mcp-server)
+[![npm provenance](https://img.shields.io/badge/provenance-SLSA%20v1-brightgreen.svg)](https://www.npmjs.com/package/@testcollab/mcp-server#provenance)
+
 Connect your AI coding assistant to [TestCollab](https://testcollab.com) — manage test cases, test plans, and suites directly from Claude, Cursor, Windsurf, Codex, or any MCP-compatible client.
 
 ## Quick Start
