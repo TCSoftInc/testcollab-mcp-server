@@ -1,8 +1,7 @@
 // TCV-7191: read test case review feedback (status, people, comments, case links).
-// Reviews live on test case revisions. A project list reads the current revision of each
-// case from the test case grid, filtered on its Review Status column. One case reads its
-// revisions, because a rejected edit restores the earlier version as a new current
-// revision without a review, so its latest review is an older revision.
+// Reviews live on test case revisions. A rejected edit can restore an earlier version
+// without a review, so project lists also look up the latest historical review when the
+// current revision has none. Keep those reads scoped to case IDs, never all project revisions.
 import { z } from "zod";
 import type { TestCollabApiClient } from "../../client/api-client.js";
 import { getConfig } from "../../config.js";
@@ -12,8 +11,9 @@ import { idSchema } from "../test-plans/schemas.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
-// With only_with_comments, one grid request checks up to this many reviewed cases.
-const COMMENT_SCAN_WINDOW = 250;
+// Bound each page's work even when most cases have never been reviewed.
+const CASE_SCAN_WINDOW = 100;
+const REVIEW_LOOKUP_CONCURRENCY = 5;
 const NO_REVIEW = 0;
 const REVIEW_STATUSES: Record<number, string> = {
   1: "review_pending",
@@ -43,7 +43,7 @@ type ReviewsInput = z.infer<typeof getTestCaseReviewsSchema>;
 export const getTestCaseReviewsTool = {
   name: "get_test_case_reviews",
   description: `Read test case review feedback: status (review_pending, approved, update_requested, rejected), author, reviewer or reviewer group, review comments as plain text, and a link to each case.
-Without test_case_id, lists the project's test cases whose current version has a review, most recently updated first, with totalReviewedCases. Pass nextOffset back as offset for the next page. With only_with_comments, a page can hold fewer than limit cases while nextOffset is set.
+Without test_case_id, lists the project's cases with a review, including rejected edits whose earlier version was restored, most recently updated first. totalCases counts all visible cases, not just reviewed cases. Each call checks up to 100 cases; a page can be empty or hold fewer than limit results while nextOffset is set. Pass nextOffset back as offset until it is null.
 With test_case_id, returns that case and its latest review, even when the case changed after that review (isCurrentRevision false), for example when a rejected edit restored the earlier version.
 Set include_history to add earlier review rounds, newest first.
 IDs are internal test case IDs, not TC- display numbers.`,
@@ -108,6 +108,12 @@ async function reviewRounds(client: TestCollabApiClient, projectId: number, case
     project: projectId, review_status_gt: NO_REVIEW, filter: JSON.stringify({ testcase_in: caseIds }),
   });
   return rows.sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+async function latestReviewRound(client: TestCollabApiClient, projectId: number, caseId: number): Promise<ApiRecord | undefined> {
+  const rounds = await client.request<ApiRecord[]>("GET", `/testcaserevisions?${query({ project: projectId, testcase: caseId, review_status_gt: NO_REVIEW, _sort: "id:DESC", _limit: 1 })}`);
+  if (!Array.isArray(rounds)) throw new Error("Invalid response from /testcaserevisions");
+  return rounds[0];
 }
 
 // A grid row is the case's current revision; give it the shape of a revision record.
@@ -183,8 +189,7 @@ async function getCaseReviews(client: TestCollabApiClient, projectId: number, in
   const caseId = input.test_case_id!;
   const rounds = input.include_history
     ? await reviewRounds(client, projectId, [caseId])
-    : await client.request<ApiRecord[]>("GET", `/testcaserevisions?${query({ project: projectId, testcase: caseId, review_status_gt: NO_REVIEW, _sort: "id:DESC", _limit: 1 })}`);
-  if (!Array.isArray(rounds)) throw new Error("Invalid response from /testcaserevisions");
+    : [await latestReviewRound(client, projectId, caseId)].filter((round): round is ApiRecord => !!round);
   const populated = rounds[0]?.testcase;
   let testCase: ApiRecord = populated && typeof populated === "object" ? populated : { id: caseId };
   if (!rounds.length) {
@@ -200,35 +205,43 @@ async function getCaseReviews(client: TestCollabApiClient, projectId: number, in
 }
 
 async function listProjectReviews(client: TestCollabApiClient, projectId: number, input: ReviewsInput, appBase: string | null) {
-  // The grid's Review Status filter keeps cases whose current revision has a review.
+  // Do not filter on current Review Status: that would hide historical rejections.
   const page = await client.listTestCases({
     projectId,
-    filter: { review_status: { filterType: "number", type: "greaterThan", filter: NO_REVIEW } },
     sort: [{ colId: "updated_at", sort: "desc" }, { colId: "id", sort: "desc" }],
-    limit: input.only_with_comments ? COMMENT_SCAN_WINDOW : input.limit,
+    limit: CASE_SCAN_WINDOW,
     offset: input.offset,
   });
-  const latest: ApiRecord[] = [];
-  let position = input.offset;
-  for (const row of page.rows as unknown as ApiRecord[]) {
-    position++;
-    if (input.only_with_comments && !storedComments(row).length) continue;
-    latest.push(fromGridRow(row));
-    if (latest.length === input.limit) break;
+  const selected: Array<{ testCase: ApiRecord; latest: ApiRecord }> = [];
+  let scanned = 0;
+  while (scanned < page.rows.length && selected.length < input.limit) {
+    // Never look ahead beyond the remaining result slots. A full page resumes at
+    // precisely the first unprocessed case, including when comments are filtered.
+    const batch = page.rows.slice(scanned, scanned + Math.min(REVIEW_LOOKUP_CONCURRENCY, input.limit - selected.length)) as unknown as ApiRecord[];
+    const latest = await Promise.all(batch.map(row => Number(row.review_status) > NO_REVIEW
+      ? Promise.resolve(fromGridRow(row))
+      : latestReviewRound(client, projectId, Number(row.id))));
+    for (const [index, testCase] of batch.entries()) {
+      scanned++;
+      const review = latest[index];
+      if (!review || (input.only_with_comments && !storedComments(review).length)) continue;
+      selected.push({ testCase, latest: review });
+    }
   }
-  const rounds = input.include_history ? await reviewRounds(client, projectId, latest.map(row => relationId(row.testcase)!)) : [];
-  const users = await knownUsers(client, projectId, [...latest, ...rounds]);
+  const rounds = input.include_history ? await reviewRounds(client, projectId, selected.map(row => Number(row.testCase.id))) : [];
+  const users = await knownUsers(client, projectId, [...selected.map(row => row.latest), ...rounds]);
   const total = Number(page.filteredCount) || 0;
+  const position = input.offset + scanned;
   return {
-    totalReviewedCases: total,
-    testCases: latest.map(row => {
-      const caseId = relationId(row.testcase);
+    totalCases: total,
+    testCases: selected.map(({ testCase, latest }) => {
+      const caseId = Number(testCase.id);
       const history = input.include_history
-        ? rounds.filter(round => relationId(round.testcase) === caseId && Number(round.id) !== Number(row.id))
+        ? rounds.filter(round => relationId(round.testcase) === caseId && Number(round.id) < Number(latest.id))
         : undefined;
-      return toCase(row.testcase, projectId, appBase, row, history, users);
+      return toCase(testCase, projectId, appBase, latest, history, users);
     }),
-    nextOffset: position < total ? position : null,
+    nextOffset: scanned > 0 && position < total ? position : null,
   };
 }
 

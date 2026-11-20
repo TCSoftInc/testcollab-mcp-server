@@ -305,18 +305,18 @@ changed after that review. For example, a rejected edit restores the earlier ver
 case, and the rejection stays on the revision of the edit. `include_history` adds the earlier
 review rounds, newest first.
 
-Omit `test_case_id` to list the project's cases whose current version has a review, most
-recently updated first:
+Omit `test_case_id` to list the project's cases with a review, most recently updated
+first. This includes rejected edits even after an earlier version has been restored:
 
 ```json
 {"only_with_comments":true,"limit":20}
 ```
 
-`totalReviewedCases` counts those cases. Pass `nextOffset` back as `offset` to read the next
-page; it is null on the last page. `only_with_comments` keeps cases whose latest review has
-at least one comment. It checks up to 250 cases per call, so a page can hold fewer than
-`limit` cases while `nextOffset` is set. A case whose current version has no review, for
-example after a rejected edit, is not in the list; read it by `test_case_id`.
+`totalCases` counts all visible cases in the project, including cases without a review.
+Pass `nextOffset` back as `offset` until it is null. Each call checks up to 100 cases,
+so a page can be empty or hold fewer than `limit` results while `nextOffset` is set.
+`only_with_comments` keeps cases whose latest review has at least one comment, including
+comments on a rejected edit. `include_history` adds review rounds older than that review.
 
 Links use the app host of `TC_API_URL`: `https://api.testcollab.io` and
 `https://api-eu.testcollab.io` link to `https://testcollab.io`, and `http://localhost:1337`

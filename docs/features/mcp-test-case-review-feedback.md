@@ -14,10 +14,12 @@ reviewer sent back; a QA lead checks what reviewers said across a project.
 `src/tools/index.ts` registers it. It uses two existing endpoints and the caller's token:
 
 - **Project list** (`test_case_id` omitted): `POST /testcases/aggrid`, the query of the
-  Test Cases page, with the Review Status column filter `review_status > 0` and the sort
-  `updated_at desc, id desc`. Each row is the current revision of a case, so it gives the
-  latest review: status, author, reviewer, reviewer group name and the stored comments.
-  Archived and trashed cases are left out, as on the Test Cases page.
+  Test Cases page, sorted by `updated_at desc, id desc`, in windows of at most 100 cases.
+  A current revision with a review supplies its review data directly. Otherwise, read
+  that case's newest revision with `review_status > 0`, using the same one-case query
+  below. Never filter the grid by current review status: that would exclude rejected
+  edits after restoration. Archived and trashed cases are left out, as on the Test Cases
+  page. Historical lookups run at most five at a time and stop once the result limit is met.
 - **One case** (`test_case_id`): `GET /testcaserevisions` with `testcase`,
   `review_status_gt=0` and `_sort=id:DESC`. The newest revision with a review status is
   the latest review. If the case has no review, `GET /testcases/:id` confirms the case and
@@ -39,19 +41,19 @@ Review status codes are the ones in tc-api: 1 `review_pending`, 2 `approved`,
   without a review, and the rejection and its comments stay on the revision of the edit.
   A one-case read therefore reads the revisions and returns that rejection with
   `isCurrentRevision: false`.
-- **The project list shows cases whose current version has a review.** The same rejected
-  edit is not in the list, because its current version has no review; read it by
-  `test_case_id`. Listing every case with any review round would need a project-wide query
-  of `testcaserevisions` (1.7M rows). Strapi runs that query as `SELECT DISTINCT
-  testcaserevisions.*`, and MySQL copies every matching revision, with its long text
-  columns, into a temporary table before it applies the limit. The grid query is the one
-  the Test Cases page already runs with a Review Status filter. The one-case and history
-  queries filter by case ID and use the `testcase` index.
+- **The project list also includes historical reviews.** A rejected edit and its comments
+  remain discoverable without knowing the case ID first. The grid provides a bounded
+  page of visible case IDs; each missing review is looked up by case ID with `_limit=1`.
+  This avoids a project-wide revision query, which can copy large revision records into
+  a temporary table before applying the limit. Current review data needs no extra lookup;
+  historical lookups and optional history queries always filter by case ID.
 - **Pagination uses `offset` and `nextOffset`**, like `list_test_cases`. With
-  `only_with_comments`, one grid request checks up to 250 reviewed cases and the tool
-  filters them, because the grid has no filter for comments. `nextOffset` then points
-  after the last case it checked, so a page can hold fewer than `limit` cases.
-  `totalReviewedCases` counts the reviewed cases before that filter.
+  or without `only_with_comments`, one call checks at most 100 visible cases and the
+  tool filters out cases without a review. `only_with_comments` checks the latest review's
+  comments, including a historical rejection. `nextOffset` points after the last case
+  checked, so a page can be empty or hold fewer than `limit` cases while more pages remain.
+  Continue until `nextOffset` is null. `totalCases` counts all visible cases, not matching
+  reviews; an exact reviewed-case total would require scanning the whole project.
 - **Comments are plain text.** tc-api stores author and system comments as `escape()`d
   editor HTML and reviewer decisions as plain text; the review panel shows
   `unescape(comment)` as HTML. The tool applies `unescape`, turns paragraph ends and line
@@ -74,9 +76,11 @@ Automated: `npm run typecheck` and
 `npm test -- --run --pool=forks --maxWorkers=1 --minWorkers=1`.
 `tests/unit/test-case-reviews.test.ts` covers the link mapping, comment text, a rejected
 edit with history, a case without reviews, a case from another project, the grid request
-and pagination, `only_with_comments`, history in a project list and input validation. The
-stdio test in `tests/integration/test-plan-transports.test.ts` discovers the tool and calls
-it through a real MCP client.
+and pagination, `only_with_comments`, history in a project list and input validation.
+Regressions cover rejected edits in project results with and without history, continuing
+after an empty page, filtering the latest review's comments and bounded concurrency.
+The stdio tests in `tests/integration/test-plan-transports.test.ts` discover the tool and
+read both a single review and a project containing a rejected edit through a real MCP client.
 
 Manual check against a local stack (`http://localhost:1337`, never production):
 
@@ -91,9 +95,10 @@ Manual check against a local stack (`http://localhost:1337`, never production):
    `include_history: true`. Expect `latestReview.status: "rejected"`,
    `isCurrentRevision: false`, both comments as plain text, and the approved round with
    four comments in `history`.
-5. Call it without `test_case_id`. Expect the other three cases, but not the first one,
-   the group name, and the admin's "Reviewer changed to ..." comment with the admin's name.
-   `totalReviewedCases` counts the listed cases of the project. Call it with `limit: 1`,
-   then pass each `nextOffset` back as `offset` until it is null. Call it with
-   `only_with_comments: true` and expect the case without comments to be left out.
+5. Call it without `test_case_id`. Expect all four cases, including the first case's
+   rejection, the group name, and the admin's "Reviewer changed to ..." comment with
+   the admin's name. `totalCases` counts all visible cases, including any never reviewed.
+   Call it with `limit: 1`, then pass each `nextOffset` back as `offset` until it is null,
+   even if an intermediate page is empty. With `only_with_comments: true`, expect the
+   case without comments to be left out and the rejected edit's comments to remain.
 6. Open each `url`; it opens the case in the Test Cases page.

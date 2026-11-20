@@ -54,15 +54,17 @@ beforeEach(() => {
     calls.push({ method, url, body });
     expect(url.searchParams.get("token")).toBe(context.apiToken);
     if (method === "POST" && url.pathname === "/testcases/aggrid") {
-      const rows = gridRows.slice(body.startRow, body.endRow);
-      return response({ rows, lastRow: null, totalCount: 55, filteredCount: gridRows.length });
+      const reviewedFilter = body.filterModel?.review_status;
+      const filtered = reviewedFilter ? gridRows.filter(row => row.review_status > reviewedFilter.filter) : gridRows;
+      const rows = filtered.slice(body.startRow, body.endRow);
+      return response({ rows, lastRow: null, totalCount: gridRows.length, filteredCount: filtered.length });
     }
     if (method !== "GET") throw new Error(`Unexpected write ${method} ${url.pathname}`);
     switch (url.pathname) {
       case "/testcaserevisions": {
         const filter = JSON.parse(url.searchParams.get("filter") || "{}");
         const ids: number[] = filter.testcase_in ?? [Number(url.searchParams.get("testcase"))];
-        let rows = revisions.filter(row => ids.includes(row.testcase.id));
+        let rows = revisions.filter(row => ids.includes(row.testcase.id) && row.review_status > 0);
         rows = url.searchParams.get("_sort") === "id:DESC" ? rows.sort((a, b) => b.id - a.id) : rows.sort((a, b) => a.id - b.id);
         const start = Number(url.searchParams.get("_start") || 0);
         return response(rows.slice(start, start + Number(url.searchParams.get("_limit"))));
@@ -158,7 +160,7 @@ describe("get_test_case_reviews for one case", () => {
 });
 
 describe("get_test_case_reviews for a project", () => {
-  it("lists cases whose current version has a review through the grid's Review Status filter", async () => {
+  it("uses current review data when present and paginates without fetching its revisions", async () => {
     gridRows = [
       gridRow(1729, { review_comments: commented("Ready for review.") }),
       gridRow(1728, { reviewer: null, reviewer_group: 3, reviewer_group_name: "QA leads" }),
@@ -167,11 +169,11 @@ describe("get_test_case_reviews for a project", () => {
     const result = unpack(await call({ limit: 2 }));
     const [grid] = requests("/testcases/aggrid");
     expect(grid!.body).toMatchObject({
-      project: "8", startRow: 0, endRow: 2,
-      filterModel: { review_status: { filterType: "number", type: "greaterThan", filter: 0 } },
+      project: "8", startRow: 0, endRow: 100,
+      filterModel: {},
       sortModel: [{ colId: "updated_at", sort: "desc" }, { colId: "id", sort: "desc" }],
     });
-    expect(result.totalReviewedCases).toBe(3);
+    expect(result.totalCases).toBe(3);
     expect(result.nextOffset).toBe(2);
     expect(result.testCases.map((row: ApiRecord) => [row.id, row.latestReview.status, row.latestReview.isCurrentRevision])).toEqual([[1729, "review_pending", true], [1728, "review_pending", true]]);
     expect(result.testCases[0].latestReview.comments).toEqual([{ author: { id: 5014, name: "Susan Wilson" }, text: "Ready for review.", createdAt: "2026-11-20T22:08:35.000Z" }]);
@@ -186,7 +188,7 @@ describe("get_test_case_reviews for a project", () => {
   it("keeps cases whose latest review has comments and continues after the last case it checked", async () => {
     gridRows = [gridRow(1730), gridRow(1729, { review_comments: commented("First") }), gridRow(1728), gridRow(1727, { review_comments: commented("Second") }), gridRow(1726, { review_comments: commented("Third") })];
     const first = unpack(await call({ only_with_comments: true, limit: 2 }));
-    expect(requests("/testcases/aggrid")[0]!.body).toMatchObject({ startRow: 0, endRow: 250 });
+    expect(requests("/testcases/aggrid")[0]!.body).toMatchObject({ startRow: 0, endRow: 100 });
     expect(first.testCases.map((row: ApiRecord) => row.id)).toEqual([1729, 1727]);
     expect(first.nextOffset).toBe(4);
     const second = unpack(await call({ only_with_comments: true, limit: 2, offset: first.nextOffset }));
@@ -201,6 +203,66 @@ describe("get_test_case_reviews for a project", () => {
     expect(testCases[0].latestReview).toMatchObject({ revision: 3, status: "review_pending", isCurrentRevision: true });
     expect(testCases[0].history.map((round: ApiRecord) => [round.revision, round.status, round.isCurrentRevision])).toEqual([[2, "rejected", false], [1, "approved", false]]);
     expect(JSON.parse(requests("/testcaserevisions")[0]!.url.searchParams.get("filter")!)).toEqual({ testcase_in: [1724] });
+  });
+
+  it.each([false, true])("includes the latest rejection after restoration, with history=%s", async (include_history) => {
+    gridRows = [gridRow(1724, { title: "Restored login", testcaserevisionid: 1349, revision: 3, review_status: 0, under_review: 0 })];
+    const single = unpack(await call({ test_case_id: 1724, include_history })).testCases[0];
+    const project = unpack(await call({ only_with_comments: true, include_history }));
+    expect(project.testCases).toHaveLength(1);
+    expect(project.testCases[0]).toMatchObject({ id: 1724, title: "Restored login", underReview: false, latestReview: single.latestReview });
+    expect(project.testCases[0].latestReview).toMatchObject({ status: "rejected", revision: 2, isCurrentRevision: false });
+    if (include_history) expect(project.testCases[0].history).toEqual(single.history);
+    else expect(project.testCases[0]).not.toHaveProperty("history");
+    expect(project.nextOffset).toBeNull();
+    expect(requests("/testcases/aggrid")[0]!.body.filterModel).toEqual({});
+  });
+
+  it("continues through unreviewed cases and keeps a rejection after an empty page", async () => {
+    gridRows = Array.from({ length: 100 }, (_, i) => gridRow(2000 + i, { review_status: 0 }));
+    gridRows.push(gridRow(1724, { testcaserevisionid: 1349, revision: 3, review_status: 0 }));
+    const first = unpack(await call({ only_with_comments: true, limit: 2 }));
+    expect(first).toMatchObject({ totalCases: 101, testCases: [], nextOffset: 100 });
+    expect(requests("/testcaserevisions")).toHaveLength(100);
+    for (const request of requests("/testcaserevisions")) {
+      expect(Object.fromEntries(request.url.searchParams)).toMatchObject({ project: "8", review_status_gt: "0", _limit: "1", _sort: "id:DESC" });
+      expect(Number(request.url.searchParams.get("testcase"))).toBeGreaterThanOrEqual(2000);
+    }
+    const last = unpack(await call({ only_with_comments: true, limit: 2, offset: first.nextOffset }));
+    expect(last.testCases.map((row: ApiRecord) => row.id)).toEqual([1724]);
+    expect(last.nextOffset).toBeNull();
+  });
+
+  it("does not reuse an old comment when the latest historical review has none", async () => {
+    gridRows = [gridRow(1724, { review_status: 0 }), gridRow(1729, { review_comments: commented("Latest feedback") })];
+    revisions = [approvedRound, { ...rejectedEdit, review_comments: [] }];
+    const filtered = unpack(await call({ only_with_comments: true, include_history: true, limit: 1 }));
+    expect(filtered.testCases.map((row: ApiRecord) => row.id)).toEqual([1729]);
+    expect(filtered.nextOffset).toBeNull();
+    const unfiltered = unpack(await call({ limit: 1 }));
+    expect(unfiltered.testCases[0].latestReview).toMatchObject({ status: "rejected", comments: [] });
+    expect(unfiltered.nextOffset).toBe(1);
+  });
+
+  it("bounds concurrent historical lookups for cases without a current review", async () => {
+    gridRows = Array.from({ length: 12 }, (_, i) => gridRow(2000 + i, { review_status: 0 }));
+    const fetch = globalThis.fetch;
+    let active = 0;
+    let peak = 0;
+    vi.stubGlobal("fetch", async (input: string, options: RequestInit) => {
+      if (new URL(input).pathname !== "/testcaserevisions") return fetch(input, options);
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        return await fetch(input, options);
+      } finally { active--; }
+    });
+    const result = unpack(await call({}));
+    expect(result.testCases).toEqual([]);
+    expect(result.nextOffset).toBeNull();
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(5);
   });
 
   it("refuses invalid input before any request", async () => {

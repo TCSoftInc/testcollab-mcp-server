@@ -18,6 +18,8 @@ let tempDir: string;
 let writes: Array<{ path: string; body: string; contentType: string }>;
 // TCV-7123: retain execution writes so the transport can confirm saved step evidence.
 let execution: ApiRecord;
+let reviewGridRows: ApiRecord[];
+let reviewRevisions: ApiRecord[];
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>(resolve => server.listen(0, "localhost", resolve));
@@ -26,6 +28,10 @@ async function listen(server: Server): Promise<number> {
 
 beforeEach(async () => {
   writes = [];
+  reviewGridRows = [];
+  reviewRevisions = [{ id: 70, revision: 2, is_head: true, review_status: 3, poster: { id: 5011, name: "Fixture Author" },
+    reviewer: { id: 5012, name: "Fixture Reviewer" }, testcase: { id: 10, title: "Sign in", display_number: 4 },
+    review_comments: [{ comment: escape("<p>Add the <b>error</b> step</p>"), user: 5012, commented_on: "2026-11-20T10:00:00.000Z" }] }];
   let nextFileId = 200;
   const dataset = { id: 7, name: "Users", parameters: [{ key: "user", field: "Username" }], datarows: [{ user: "alice" }, { user: "bob" }] };
   execution = { id: 90, project: 8, regression: 6, test_plan: 42, test_plan_test_case: { id: 50, test_case: 10 }, assigned_to: 5011,
@@ -42,7 +48,23 @@ beforeEach(async () => {
     let body = "";
     for await (const chunk of req) body += chunk.toString();
     res.setHeader("Content-Type", "application/json");
+    if (req.method === "POST" && url.pathname === "/testcases/aggrid") {
+      const query = JSON.parse(body);
+      const filter = query.filterModel?.review_status;
+      const filtered = filter ? reviewGridRows.filter(row => row.review_status > filter.filter) : reviewGridRows;
+      res.end(JSON.stringify({ rows: filtered.slice(query.startRow, query.endRow), filteredCount: filtered.length, totalCount: reviewGridRows.length }));
+      return;
+    }
     if (req.method === "GET") {
+      if (url.pathname === "/testcaserevisions") {
+        const filter = JSON.parse(url.searchParams.get("filter") || "{}");
+        const ids = filter.testcase_in ?? [Number(url.searchParams.get("testcase"))];
+        let rows = reviewRevisions.filter(row => ids.includes(row.testcase.id) && row.review_status > 0);
+        rows = rows.sort((a, b) => url.searchParams.get("_sort") === "id:DESC" ? b.id - a.id : a.id - b.id);
+        const start = Number(url.searchParams.get("_start") || 0);
+        res.end(JSON.stringify(rows.slice(start, start + Number(url.searchParams.get("_limit")))));
+        return;
+      }
       const data: Record<string, unknown> = {
         "/executedtestcases": [execution],
         "/testplans/42": { id: 42, project: 8, title: "Protocol plan" },
@@ -53,10 +75,6 @@ beforeEach(async () => {
         "/testplantestcases": [{ id: 50, test_case: { id: 10, title: "Sign in" } }],
         "/testplanconfigurations": [],
         "/testdatasets/getLatest": [dataset],
-        // TCV-7191: one review round of case 10, as the revision list returns it.
-        "/testcaserevisions": [{ id: 70, revision: 2, is_head: true, review_status: 3, poster: { id: 5011, name: "Fixture Author" },
-          reviewer: { id: 5012, name: "Fixture Reviewer" }, testcase: { id: 10, title: "Sign in", display_number: 4 },
-          review_comments: [{ comment: escape("<p>Add the <b>error</b> step</p>"), user: 5012, commented_on: "2026-11-20T10:00:00.000Z" }] }],
       };
       if (!(url.pathname in data)) { res.statusCode = 404; res.end("{}"); return; }
       res.end(JSON.stringify(data[url.pathname]));
@@ -192,6 +210,30 @@ it("stdio discovers get_test_case_reviews and returns a case's latest review as 
   expect(testCase).toMatchObject({ id: 10, title: "Sign in", displayNumber: 4, url: null });
   expect(testCase.latestReview).toMatchObject({ revision: 2, status: "update_requested", isCurrentRevision: true, reviewer: { id: 5012, name: "Fixture Reviewer" } });
   expect(testCase.latestReview.comments).toEqual([{ author: { id: 5012, name: "Fixture Reviewer" }, text: "Add the error step", createdAt: "2026-11-20T10:00:00.000Z" }]);
+  expect(writes).toHaveLength(0);
+}, 10000);
+
+it("stdio project review lookup retains a rejected edit and its earlier approved round", async () => {
+  reviewGridRows = [
+    { id: 11, title: "Never reviewed", review_status: 0, revision: 1 },
+    { id: 10, title: "Restored sign in", display_number: 4, review_status: 0, revision: 3, testcaserevisionid: 71, under_review: 0 },
+  ];
+  const rejected = { ...reviewRevisions[0], is_head: false, review_status: 4 };
+  reviewRevisions = [{ ...rejected, id: 69, revision: 1, review_status: 2, review_comments: [] }, rejected];
+  client = new Client({ name: "tcv7191-project-test", version: "1" });
+  await client.connect(new StdioClientTransport({
+    command: process.execPath, args: ["--import", "tsx", "src/index.ts"],
+    env: { ...process.env as Record<string, string>, TC_API_TOKEN: "transport-fixture-token", TC_API_URL: apiUrl, TC_DEFAULT_PROJECT: "8" },
+    stderr: "pipe",
+  }));
+  const result = await client.callTool({ name: "get_test_case_reviews", arguments: { only_with_comments: true, include_history: true, limit: 1 } });
+  expect(result.isError).not.toBe(true);
+  const data = JSON.parse((result.content as any)[0].text);
+  expect(data).toMatchObject({ totalCases: 2, nextOffset: null });
+  expect(data.testCases).toHaveLength(1);
+  expect(data.testCases[0]).toMatchObject({ id: 10, title: "Restored sign in", latestReview: { status: "rejected", revision: 2, isCurrentRevision: false } });
+  expect(data.testCases[0].latestReview.comments[0].text).toBe("Add the error step");
+  expect(data.testCases[0].history.map((round: ApiRecord) => round.status)).toEqual(["approved"]);
   expect(writes).toHaveLength(0);
 }, 10000);
 
