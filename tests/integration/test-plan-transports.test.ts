@@ -53,6 +53,10 @@ beforeEach(async () => {
         "/testplantestcases": [{ id: 50, test_case: { id: 10, title: "Sign in" } }],
         "/testplanconfigurations": [],
         "/testdatasets/getLatest": [dataset],
+        // TCV-7191: one review round of case 10, as the revision list returns it.
+        "/testcaserevisions": [{ id: 70, revision: 2, is_head: true, review_status: 3, poster: { id: 5011, name: "Fixture Author" },
+          reviewer: { id: 5012, name: "Fixture Reviewer" }, testcase: { id: 10, title: "Sign in", display_number: 4 },
+          review_comments: [{ comment: escape("<p>Add the <b>error</b> step</p>"), user: 5012, commented_on: "2026-11-20T10:00:00.000Z" }] }],
       };
       if (!(url.pathname in data)) { res.statusCode = 404; res.end("{}"); return; }
       res.end(JSON.stringify(data[url.pathname]));
@@ -170,6 +174,25 @@ it("stdio reads datasets and reports a row/step file without replacing another r
   expect(rows[0]).toMatchObject({ dataset_row_index: 0, status: "unexecuted" });
   expect(rows[0]).not.toHaveProperty("attachments");
   expect(rows[1]).toMatchObject({ dataset_row_index: 1, status: "passed", comment: escape("bob passed"), attachments: [200] });
+}, 10000);
+
+// TCV-7191: discover and call the review feedback tool through a real stdio client.
+it("stdio discovers get_test_case_reviews and returns a case's latest review as plain text", async () => {
+  client = new Client({ name: "tcv7191-test", version: "1" });
+  await client.connect(new StdioClientTransport({
+    command: process.execPath, args: ["--import", "tsx", "src/index.ts"],
+    env: { ...process.env as Record<string, string>, TC_API_TOKEN: "transport-fixture-token", TC_API_URL: apiUrl, TC_DEFAULT_PROJECT: "8" },
+    stderr: "pipe",
+  }));
+  const tool = (await client.listTools()).tools.find(tool => tool.name === "get_test_case_reviews")!;
+  expect(Object.keys(tool.inputSchema.properties!)).toEqual(["project_id", "test_case_id", "include_history", "only_with_comments", "limit", "offset"]);
+  const result = await client.callTool({ name: "get_test_case_reviews", arguments: { test_case_id: 10 } });
+  expect(result.isError).not.toBe(true);
+  const [testCase] = JSON.parse((result.content as any)[0].text).testCases;
+  expect(testCase).toMatchObject({ id: 10, title: "Sign in", displayNumber: 4, url: null });
+  expect(testCase.latestReview).toMatchObject({ revision: 2, status: "update_requested", isCurrentRevision: true, reviewer: { id: 5012, name: "Fixture Reviewer" } });
+  expect(testCase.latestReview.comments).toEqual([{ author: { id: 5012, name: "Fixture Reviewer" }, text: "Add the error step", createdAt: "2026-11-20T10:00:00.000Z" }]);
+  expect(writes).toHaveLength(0);
 }, 10000);
 
 // TCV-7109: the HTTP transport is disabled; its server is archived in archive/http-server.ts.

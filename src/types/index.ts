@@ -59,6 +59,8 @@ export interface TestCaseFilter {
   requirements?: NumberFilter;
   issue_key?: TextFilter;
   under_review?: NumberFilter;
+  // TCV-7191: the grid's Review Status column (1 pending, 2 approved, 3 update requested, 4 rejected).
+  review_status?: NumberFilter;
   is_automated?: NumberFilter;
   automation_status?: TextFilter;
   last_run_status?: TextFilter;

@@ -13,6 +13,9 @@ import {
   getTestCaseTool,
   getTestCaseSchema,
   handleGetTestCase,
+  getTestCaseReviewsTool,
+  getTestCaseReviewsSchema,
+  handleGetTestCaseReviews,
 } from "./test-cases/index.js";
 import {
   getTestPlanTool,
@@ -453,6 +456,18 @@ Example - patch a single step:
     getTestCaseSchema.shape,
     async (args) => {
       return handleGetTestCase(args);
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // get_test_case_reviews (TCV-7191)
+  // -------------------------------------------------------------------------
+  server.tool(
+    getTestCaseReviewsTool.name,
+    getTestCaseReviewsTool.description,
+    getTestCaseReviewsSchema.shape,
+    async (args) => {
+      return handleGetTestCaseReviews(args);
     }
   );
 

@@ -134,6 +134,7 @@ You should see the TestCollab tools listed. Try: *"Show me all test cases"*.
 | **get_project_context** | Get suites, tags, custom fields, requirements, test plan folders, releases, users — call this first |
 | **list_test_cases** | Query test cases with filtering, sorting, and pagination |
 | **get_test_case** | Fetch a test case with full step details |
+| **get_test_case_reviews** | Read review status, author, reviewer, comments and case links for one case or a project |
 | **create_test_case** | Create a test case with steps, tags, custom fields |
 | **update_test_case** | Update any test case field |
 | **list_test_plans** | List test plans with filtering/sorting (including release ID/title filters) |
@@ -286,6 +287,42 @@ through `report_test_case_result`. File parsing, auto-create and builds are outs
 this execution flow.
 
 See [execution architecture and verification](docs/features/mcp-test-plan-execution.md).
+
+## Read review feedback
+
+`get_test_case_reviews` reads the review workflow of test cases: the status
+(`review_pending`, `approved`, `update_requested`, `rejected`), the author, the reviewer
+or reviewer group, the review comments as plain text, and a link to each case.
+
+Read one case with `test_case_id` (the internal ID, not the `TC-` number):
+
+```json
+{"test_case_id":1724,"include_history":true}
+```
+
+The response holds the case's latest review. `isCurrentRevision` is false when the case
+changed after that review. For example, a rejected edit restores the earlier version of the
+case, and the rejection stays on the revision of the edit. `include_history` adds the earlier
+review rounds, newest first.
+
+Omit `test_case_id` to list the project's cases whose current version has a review, most
+recently updated first:
+
+```json
+{"only_with_comments":true,"limit":20}
+```
+
+`totalReviewedCases` counts those cases. Pass `nextOffset` back as `offset` to read the next
+page; it is null on the last page. `only_with_comments` keeps cases whose latest review has
+at least one comment. It checks up to 250 cases per call, so a page can hold fewer than
+`limit` cases while `nextOffset` is set. A case whose current version has no review, for
+example after a rejected edit, is not in the list; read it by `test_case_id`.
+
+Links use the app host of `TC_API_URL`: `https://api.testcollab.io` and
+`https://api-eu.testcollab.io` link to `https://testcollab.io`, and `http://localhost:1337`
+links to `http://localhost:8080`. For any other API host, `url` is null.
+
+See [review feedback design and QA](docs/features/mcp-test-case-review-feedback.md).
 
 ## Local Development Setup
 

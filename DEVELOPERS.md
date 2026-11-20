@@ -123,7 +123,7 @@ src/
     api-client.ts       # TestCollab API client wrapper
   tools/
     index.ts            # Tool registry + Zod schemas
-    test-cases/         # create, get, list, update
+    test-cases/         # create, get, list, update, reviews
     test-plans/         # create, list, update
     suites/             # create, delete, get, list, move, reorder, update
   resources/
